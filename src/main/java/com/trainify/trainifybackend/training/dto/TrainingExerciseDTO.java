@@ -11,10 +11,7 @@ public record TrainingExerciseDTO(
         String note,
 
         int amount,
-        int duration,
-
-        double intensityScore,
-        String intensityScoreMessage
+        int duration
 
         ) {
 }

@@ -26,9 +26,6 @@ public class TrainingExercise {
 
     private int duration; // czas w minutach cwiczenia
 
-    private double intensityScore; // Wynik intensywnosci treningu 0 - 100
-    private String intensityScoreMessage; // Komunikat jak intensywny trening b
-
 
     @ManyToOne
     @JoinColumn(name = "training_id")

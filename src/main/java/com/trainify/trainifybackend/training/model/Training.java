@@ -26,6 +26,11 @@ public class Training {
     private LocalDate date; // data treningu
     private LocalDateTime createdAt;// kiedy wpis został dodany
 
+
+    private double intensityScore; // Wynik intensywnosci treningu 0 - 100
+    private String intensityScoreMessage; // Komunikat jak intensywny trening był
+
+
     @ManyToOne
     @JoinColumn(name = "user_id")
     private User userAssigned;

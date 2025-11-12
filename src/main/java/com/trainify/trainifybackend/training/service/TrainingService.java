@@ -44,10 +44,12 @@ public class TrainingService {
 
 
         //Sprawdzam, czy lista ćwiczeń w dto istnieje i sprawdzam, czy lista nie jest pusta, jeżeli się zgadza tworze ćwiczenia
-        if(trainingDTO.exercises() != null && !trainingDTO.exercises().isEmpty()){
+        if (trainingDTO.exercises() != null && !trainingDTO.exercises().isEmpty()) {
             List<TrainingExercise> exercises = createExerciseMethod(trainingDTO, training);
             training.setExercises(exercises);
+            calculateTiS(training);
         }
+
 
 
         trainingRepository.save(training);
@@ -76,6 +78,8 @@ public class TrainingService {
 
         List<TrainingExercise> exercises = createExerciseMethod(trainingDTO, existingTraining);
         existingTraining.setExercises(exercises); //Dzięki CascadeType.ALL i orphanRemoval = true Hibernate sam zajmie się usunięciem starych ćwiczeń i dodaniem nowych.
+        calculateTiS(existingTraining);
+
 
 
         trainingRepository.save(existingTraining);
@@ -93,20 +97,16 @@ public class TrainingService {
     }
 
     public List<TrainingExercise> createExerciseMethod(TrainingDTO trainingDTO, Training training) {
-        List<TrainingExercise> exercises = trainingDTO.exercises().stream()
+        return trainingDTO.exercises().stream()
                 .map(dto -> TrainingExercise.builder()
+                        .id(dto.id())
                         .exerciseCategory(dto.exerciseCategory())
                         .note(dto.note())
                         .amount(dto.amount())
                         .duration(dto.duration())
-                        .intensityScore(dto.intensityScore())
-                        .intensityScoreMessage(dto.intensityScoreMessage())
                         .trainingAssigned(training)
-                        .build())
-                .collect(Collectors.toList());
-        training.setExercises(exercises);
-
-        return exercises;
+                        .build()
+                ).toList();
     }
 
 
@@ -121,9 +121,7 @@ public class TrainingService {
                                 exercise.getExerciseCategory(),
                                 exercise.getNote(),
                                 exercise.getAmount(),
-                                exercise.getDuration(),
-                                exercise.getIntensityScore(),
-                                exercise.getIntensityScoreMessage()
+                                exercise.getDuration()
                         ))
                 .collect(Collectors.toList());
     }
@@ -140,22 +138,26 @@ public class TrainingService {
 
 
     public TrainingStatisticsDTO getStatisticsForUserId(Long userId) {
-        List<TrainingExercise> trainings = trainingExerciseRepository.findAllByTrainingAssignedUserAssignedId(userId);
+        List<Training> trainings = trainingRepository.findAllByUserAssigned_Id(userId);
 
         if (trainings.isEmpty()) {
             return new TrainingStatisticsDTO(0, 0, 0);
         }
 
-        double averageDuration = trainings.stream()
+        // flatMap bierze wszystkie ćwiczenia ze wszystkich treningów i łączy je w jedną dużą listę, żeby łatwo je podsumować
+        // (inaczej spłaszcza strumienie i lączy w jeden duży strumień)
+         double averageDuration = trainings.stream()
+                .flatMap(t->t.getExercises().stream())
                 .mapToDouble(TrainingExercise::getDuration)
                 .average()
                 .orElse(0.0);
         double averageAmount = trainings.stream()
+                .flatMap(t->t.getExercises().stream())
                 .mapToDouble(TrainingExercise::getAmount)
                 .average()
                 .orElse(0.0);
         double averageIntensityScore = trainings.stream()
-                .mapToDouble(TrainingExercise::getIntensityScore)
+                .mapToDouble(Training::getIntensityScore)
                 .average()
                 .orElse(0.0);
 
@@ -184,6 +186,36 @@ public class TrainingService {
 
 
     public void calculateTiS(Training training) {
-        // do zrobienia
+
+
+        if(training.getExercises() == null || training.getExercises().isEmpty()){
+            training.setIntensityScore(0);
+            training.setIntensityScoreMessage("Brak ćwiczeń w treningu");
+            return;
+        }
+
+
+        int totalDuration = training.getExercises().stream()
+                .mapToInt(TrainingExercise::getDuration)
+                .sum();
+        int totalAmount = training.getExercises().stream()
+                .mapToInt(TrainingExercise::getAmount)
+                .sum();
+
+        // Wzór: Czas + (powtórzenia * 2)
+        // Math.min(..., 100) = maksymalnie 100, Math.max(0, ...) = minimalnie 0
+        // Najpierw ograniczam górną granicę, potem dolną, wynik zawsze w przedziale 0–100
+
+        double TiS = Math.max(0, Math.min(totalDuration + (totalAmount * 2), 100));
+        String feedback;
+
+        if (TiS < 40) feedback = "Lekki Trening";
+        else if (TiS < 70) feedback = "Dobry Trening";
+        else feedback = "Bardzo dobry Trening";
+
+
+        training.setIntensityScore(TiS);
+        training.setIntensityScoreMessage(feedback);
+
     }
 }
