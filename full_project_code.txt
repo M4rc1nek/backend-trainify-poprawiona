@@ -852,6 +852,7 @@ public class TrainingService {
         Training training = Training.builder()
                 .date(trainingDTO.date())
                 .createdAt(LocalDateTime.now())
+                .note(trainingDTO.note())
                 .userAssigned(user)
                 .build();
 
@@ -889,8 +890,15 @@ public class TrainingService {
         existingTraining.setDate(trainingDTO.date()); // Najpierw zmieniasz date w istniejącym obiekcie, zanim zapiszesz go w repozytorium, to standardowa aktualizacja encji.
 
 
-        List<TrainingExercise> exercises = createExercise(trainingDTO, existingTraining);
-        existingTraining.setExercises(exercises); //Dzięki CascadeType.ALL i orphanRemoval = true Hibernate sam zajmie się usunięciem starych ćwiczeń i dodaniem nowych.
+        //Zastępuje stare ćwiczenia nowymi, tak żeby Hibernate poprawnie usuwał te usunięte.
+        List<TrainingExercise> newExercises = createExercise(trainingDTO, existingTraining);
+        if(existingTraining.getExercises() == null){
+            existingTraining.setExercises(newExercises);
+        }else{
+            existingTraining.getExercises().clear();
+            existingTraining.getExercises().addAll(newExercises);
+        }
+
         calculateTiS(existingTraining);
 
 
@@ -918,7 +926,8 @@ public class TrainingService {
                         .duration(dto.duration())
                         .trainingAssigned(training)
                         .build()
-                ).toList();
+                )
+                .collect(Collectors.toList());
     }
 
 
@@ -955,18 +964,25 @@ public class TrainingService {
             return new TrainingStatisticsDTO(0, 0, 0);
         }
 
-        // flatMap bierze wszystkie ćwiczenia ze wszystkich treningów i łączy je w jedną dużą listę, żeby łatwo je podsumować
-        // (inaczej spłaszcza strumienie i lączy w jeden duży strumień)
+
+        //średnia czasu całego treningu -> sumujemy czas wszystkich ćwiczeń w treningu, potem średnia po treningach
         double averageDuration = trainings.stream()
-                .flatMap(t -> t.getExercises().stream())
-                .mapToDouble(TrainingExercise::getDuration)
+                .mapToDouble(t -> t.getExercises().stream()
+                        .mapToInt(TrainingExercise::getDuration)
+                        .sum()
+                )
                 .average()
                 .orElse(0.0);
+
+        //średnia liczby powtórzeń -> sumujemy wszystkie ćwiczenia w treningu, potem średnia po treningach
         double averageAmount = trainings.stream()
-                .flatMap(t -> t.getExercises().stream())
-                .mapToDouble(TrainingExercise::getAmount)
+                .mapToDouble(t->t.getExercises().stream()
+                        .mapToInt(TrainingExercise::getAmount)
+                        .sum()
+                )
                 .average()
                 .orElse(0.0);
+
         double averageIntensityScore = trainings.stream()
                 .mapToDouble(Training::getIntensityScore)
                 .average()
@@ -1014,11 +1030,16 @@ public class TrainingService {
                 .mapToInt(TrainingExercise::getAmount)
                 .sum();
 
-        // Wzór: Czas + (powtórzenia * 2)
         // Math.min(..., 100) = maksymalnie 100, Math.max(0, ...) = minimalnie 0
         // Najpierw ograniczam górną granicę, potem dolną, wynik zawsze w przedziale 0–100
 
-        double TiS = Math.max(0, Math.min(totalDuration + (totalAmount * 0.5), 100));
+
+        // Normalizacja czasu i ilości powtórzeń do zakresu 0–1
+        // 80 minut i 500 powtórzeń to maksymalne wartości przy pełnym wyniku
+        double calculateDuration = Math.min(totalDuration / 60.0, 1.0);
+        double calculateAmount = Math.min(totalAmount / 400.0 , 1.0);
+
+        double TiS = (calculateDuration * 0.5 + calculateAmount * 0.5) * 100;
         String feedback;
 
         if (TiS < 40) feedback = "Lekki Trening";
@@ -1029,6 +1050,14 @@ public class TrainingService {
         training.setIntensityScore(TiS);
         training.setIntensityScoreMessage(feedback);
 
+
+
+        /*
+            Na frontendzie dodac:  Wskaźnik intensywności treningu Wzór: nowy wzor, Wzór: nowy wzor + usunac "Przykład"
+            Zmienic uklad paneli, zmienic kolory
+
+
+         */
     }
 }
 package com.trainify.trainifybackend.user.controller;
@@ -1239,181 +1268,3 @@ public class TrainifyBackendApplication {
 
 }
 package com.trainify.trainifybackend.training.service;
-
-public class TrainingServiceTest {
-}
-package com.trainify.trainifybackend.user.service;
-
-
-import com.trainify.trainifybackend.exception.EmailAlreadyExistsException;
-import com.trainify.trainifybackend.exception.UserNotFoundException;
-import com.trainify.trainifybackend.exception.UsernameAlreadyExistsException;
-import com.trainify.trainifybackend.exception.WrongPasswordException;
-import com.trainify.trainifybackend.user.dto.UserRegisterLoginDTO;
-import com.trainify.trainifybackend.user.model.User;
-import com.trainify.trainifybackend.user.repository.UserRepository;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.crypto.password.PasswordEncoder;
-
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-public class UserServiceTest {
-
-    @InjectMocks
-    private UserService userService; //InjectMocks dlatego ze testujesz prawdziwe zachowanie UserService
-
-    @Mock
-    private UserRepository userRepository;
-
-    @Mock
-    private PasswordEncoder passwordEncoder;
-
-
-    @Test
-    void shouldRegisterUserSuccessfully() {
-
-        // GIVEN
-        UserRegisterLoginDTO userRegisterLoginDTO = new UserRegisterLoginDTO("Marcin", "haslo123", "supermail@example.com");
-
-        when(userRepository.existsByUsername("Marcin")).thenReturn(false);
-        when(userRepository.existsByEmail("supermail@example.com")).thenReturn(false);
-
-
-        when(passwordEncoder.encode("haslo123")).thenReturn("hashedPassword");
-
-        //Powyzej symulujesz czy uzytkownik "Marcin: z mailem "supermail@example.com" nie istnieje w bazie, symulujesz czy haslo zostało zahashowane
-
-
-        User savedUser = User.builder()
-                .id(1L)
-                .username("Marcin")
-                .email("supermail@example.com")
-                .password("hashedPassword")
-                .build();
-
-
-        when(userRepository.save(any(User.class))).thenReturn(savedUser);
-
-        //WHEN
-        UserRegisterLoginDTO result = userService.registerUser(userRegisterLoginDTO);
-
-
-        //THEN
-        assertEquals("Marcin", result.username());
-        assertEquals("supermail@example.com", result.email());
-        assertNull(result.password());
-
-    }
-
-
-    @Test
-    void shouldThrowWhenUsernameAlreadyExists() {
-
-
-        //GIVEN
-        UserRegisterLoginDTO userRegisterLoginDTO = new UserRegisterLoginDTO("Marcin", null, null);
-
-        when(userRepository.existsByUsername("Marcin")).thenReturn(true);
-
-        //WHEN & THEN
-        assertThrows(UsernameAlreadyExistsException.class, () -> userService.registerUser(userRegisterLoginDTO));
-
-
-    }
-
-    @Test
-    void shouldThrowWhenEmailAlreadyExists() {
-
-        //GIVEN
-        UserRegisterLoginDTO userRegisterLoginDTO = new UserRegisterLoginDTO(null, null, "example@gmail.com");
-
-        when(userRepository.existsByEmail("example@gmail.com")).thenReturn(true);
-
-        assertThrows(EmailAlreadyExistsException.class, () -> userService.registerUser(userRegisterLoginDTO));
-
-    }
-
-    @Test
-    void shouldLoginSuccessfully() {
-        //GIVEN
-        User user = User.builder()
-                .id(1L)
-                .username("Marcin")
-                .email("example@gmail.com")
-                .password("hashedPassword")
-                .build();
-
-        when(userRepository.findByEmail("example@gmail.com")).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches("haslo123", "hashedPassword")).thenReturn(true);
-
-
-        UserRegisterLoginDTO result = userService.loginUser("example@gmail.com", "haslo123");
-
-
-        assertEquals("example@gmail.com", result.email());
-        assertNull(result.password());
-
-
-    }
-
-    @Test
-    void shouldThrowWhenUserNotFound() {
-
-
-        when(userRepository.findByEmail("example@gmail.com")).thenReturn(Optional.empty());
-
-        assertThrows(UserNotFoundException.class, () -> userService.loginUser("example@gmail.com", "haslo123"));
-
-    }
-
-
-    @Test
-    void shouldThrowWhenWrongPassword() {
-
-        User user = User.builder()
-                .id(1L)
-                .username("Marcin")
-                .email("example@gmail.com")
-                .password("hashedPassword")
-                .build();
-
-        when(userRepository.findByEmail("example@gmail.com")).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches("wrongPassword", "hashedPassword")).thenReturn(false);
-
-
-        assertThrows(WrongPasswordException.class, () -> userService.loginUser("example@gmail.com", "wrongPassword"));
-
-
-    }
-
-
-
-}
-package com.trainify.trainifybackend;
-
-import com.trainify.trainifybackend.user.service.UserService;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-
-@SpringBootTest
-class TrainifyBackendApplicationTests {
-
-    @Autowired
-    private UserService service;
-
-
-	@Test
-	void contextLoads() {
-	}
-
-}

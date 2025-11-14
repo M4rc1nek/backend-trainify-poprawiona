@@ -38,12 +38,15 @@ public class TrainingService {
         Training training = Training.builder()
                 .date(trainingDTO.date())
                 .createdAt(LocalDateTime.now())
+                .note(trainingDTO.note())
+                .intensityScore(trainingDTO.intensityScore())
+                .intensityScoreMessage(trainingDTO.intensityScoreMessage())
                 .userAssigned(user)
                 .build();
 
 
         //Sprawdzam, czy lista ćwiczeń w dto istnieje i sprawdzam, czy lista nie jest pusta, jeżeli się zgadza tworze ćwiczenia
-        if(!CollectionUtils.isEmpty(trainingDTO.exercises())){
+        if (!CollectionUtils.isEmpty(trainingDTO.exercises())) {
             List<TrainingExercise> exercises = createExercise(trainingDTO, training);
             training.setExercises(exercises);
             calculateTiS(training);
@@ -57,6 +60,8 @@ public class TrainingService {
                 training.getId(),
                 user.getId(),
                 training.getNote(),
+                training.getIntensityScore(),
+                training.getIntensityScoreMessage(),
                 training.getDate(),
                 training.getCreatedAt(),
                 getExercise
@@ -73,30 +78,29 @@ public class TrainingService {
 
 
         existingTraining.setDate(trainingDTO.date()); // Najpierw zmieniasz date w istniejącym obiekcie, zanim zapiszesz go w repozytorium, to standardowa aktualizacja encji.
-
+        existingTraining.setNote(trainingDTO.note()); // aktualizacja notatki
 
         //Zastępuje stare ćwiczenia nowymi, tak żeby Hibernate poprawnie usuwał te usunięte.
         List<TrainingExercise> newExercises = createExercise(trainingDTO, existingTraining);
-        if(existingTraining.getExercises() == null){
+        if (existingTraining.getExercises() == null) {
             existingTraining.setExercises(newExercises);
-        }else{
+        } else {
             existingTraining.getExercises().clear();
             existingTraining.getExercises().addAll(newExercises);
         }
 
-
-
         calculateTiS(existingTraining);
-
-
         trainingRepository.save(existingTraining);
 
         List<TrainingExerciseDTO> getExercise = getExercise(existingTraining);
 
         return new TrainingDTO(
                 existingTraining.getId(),
+
                 userId,
                 existingTraining.getNote(),
+                existingTraining.getIntensityScore(),
+                existingTraining.getIntensityScoreMessage(),
                 existingTraining.getDate(),
                 existingTraining.getCreatedAt(),
                 getExercise
@@ -151,18 +155,25 @@ public class TrainingService {
             return new TrainingStatisticsDTO(0, 0, 0);
         }
 
-        // flatMap bierze wszystkie ćwiczenia ze wszystkich treningów i łączy je w jedną dużą listę, żeby łatwo je podsumować
-        // (inaczej spłaszcza strumienie i lączy w jeden duży strumień)
+
+        //średnia czasu całego treningu -> sumujemy czas wszystkich ćwiczeń w treningu, potem średnia po treningach
         double averageDuration = trainings.stream()
-                .flatMap(t -> t.getExercises().stream())
-                .mapToDouble(TrainingExercise::getDuration)
+                .mapToDouble(t -> t.getExercises().stream()
+                        .mapToInt(TrainingExercise::getDuration)
+                        .sum()
+                )
                 .average()
                 .orElse(0.0);
+
+        //średnia liczby powtórzeń -> sumujemy wszystkie ćwiczenia w treningu, potem średnia po treningach
         double averageAmount = trainings.stream()
-                .flatMap(t -> t.getExercises().stream())
-                .mapToDouble(TrainingExercise::getAmount)
+                .mapToDouble(t -> t.getExercises().stream()
+                        .mapToInt(TrainingExercise::getAmount)
+                        .sum()
+                )
                 .average()
                 .orElse(0.0);
+
         double averageIntensityScore = trainings.stream()
                 .mapToDouble(Training::getIntensityScore)
                 .average()
@@ -186,6 +197,8 @@ public class TrainingService {
                 training.getId(),
                 training.getUserAssigned().getId(),
                 training.getNote(),
+                training.getIntensityScore(),
+                training.getIntensityScoreMessage(),
                 training.getDate(),
                 training.getCreatedAt(),
                 getExercise(training)
@@ -210,11 +223,16 @@ public class TrainingService {
                 .mapToInt(TrainingExercise::getAmount)
                 .sum();
 
-        // Wzór: Czas + (powtórzenia * 2)
         // Math.min(..., 100) = maksymalnie 100, Math.max(0, ...) = minimalnie 0
         // Najpierw ograniczam górną granicę, potem dolną, wynik zawsze w przedziale 0–100
 
-        double TiS = Math.min(Math.sqrt((double) totalDuration / 1500 * 50) + Math.sqrt((double) totalAmount / 3000 * 50), 100);
+
+        // Normalizacja czasu i ilości powtórzeń do zakresu 0–1
+        // 80 minut i 500 powtórzeń to maksymalne wartości przy pełnym wyniku
+        double calculateDuration = Math.min(totalDuration / 60.0, 1.0);
+        double calculateAmount = Math.min(totalAmount / 400.0, 1.0);
+
+        double TiS = (calculateDuration * 0.5 + calculateAmount * 0.5) * 100;
         String feedback;
 
         if (TiS < 40) feedback = "Lekki Trening";
@@ -226,13 +244,5 @@ public class TrainingService {
         training.setIntensityScoreMessage(feedback);
 
 
-
-        /*
-            Naprawic algorytm TiS, naprawic notatke (w bazie caly czas jest jako null, na frontendzie sie nie pokazuje)
-            Na frontendzie dodac:  Wskaźnik intensywności treningu Wzór: nowy wzor, Wzór: nowy wzor + usunac "Przykład"
-            Zmienic uklad paneli, zmienic kolory
-
-
-         */
     }
 }

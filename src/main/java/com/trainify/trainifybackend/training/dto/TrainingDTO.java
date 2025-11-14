@@ -14,6 +14,10 @@ public record TrainingDTO(
 
         String note,
 
+        double intensityScore, // Wynik intensywnosci treningu 0 - 100
+        String intensityScoreMessage, // Komunikat jak intensywny trening był
+
+
         @PastOrPresent LocalDate date,
         @JsonInclude(JsonInclude.Include.NON_NULL) LocalDateTime createdAt,
 
