@@ -2,6 +2,7 @@ package com.trainify.trainifybackend.training.controller;
 
 
 import com.trainify.trainifybackend.training.dto.TrainingDTO;
+import com.trainify.trainifybackend.training.dto.TrainingPlanDTO;
 import com.trainify.trainifybackend.training.dto.TrainingStatisticsDTO;
 import com.trainify.trainifybackend.training.service.TrainingService;
 import jakarta.validation.Valid;
@@ -22,6 +23,11 @@ public class TrainingController {
     @PostMapping("/training")
     public ResponseEntity<TrainingDTO> addTraining(@RequestBody @Valid TrainingDTO trainingDTO) {
         return ResponseEntity.ok(trainingService.addTraining(trainingDTO));
+    }
+
+    @PostMapping("/training/addReadyPlanToUser/{userId}")
+    public ResponseEntity<TrainingDTO> addReadyPlanToUser(@RequestBody TrainingPlanDTO trainingPlanDTO, @PathVariable Long userId){
+        return ResponseEntity.ok(trainingService.addReadyPlanToUser(userId, trainingPlanDTO));
     }
 
 

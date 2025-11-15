@@ -4,6 +4,7 @@ import com.trainify.trainifybackend.exception.TrainingForUserNotFoundException;
 import com.trainify.trainifybackend.exception.UserNotFoundException;
 import com.trainify.trainifybackend.training.dto.TrainingDTO;
 import com.trainify.trainifybackend.training.dto.TrainingExerciseDTO;
+import com.trainify.trainifybackend.training.dto.TrainingPlanDTO;
 import com.trainify.trainifybackend.training.dto.TrainingStatisticsDTO;
 import com.trainify.trainifybackend.training.model.*;
 import com.trainify.trainifybackend.training.repository.TrainingRepository;
@@ -15,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
@@ -118,15 +120,15 @@ public class TrainingService {
                     /* Jeśli displayName jest puste, używamy enumów, aby dopasować techniczną nazwę do czytelnej nazwy
                     valueOf(name) zamienia String w odpowiadającą stałą enumu (np. "POMPKI_KLASYCZNE" → ChestExercise.POMPKI_KLASYCZNE)*/
                     if (displayName == null && name != null) {
-                            switch (dto.exerciseCategory()) {
-                                case Klata -> displayName = ChestExercise.valueOf(name).getNazwa();
-                                // valueOf(name) – znajdź element enum ChestExercise o dokładnie tej nazwie (np. "POMPKI_KLASYCZNE")
-                                // getNazwa() – pobierz "czytelną" nazwę ćwiczenia np. "Pompki klasyczne"
-                                case Plecy -> displayName = BackExercise.valueOf(name).getNazwa();
-                                case Barki -> displayName = ShoulderExercise.valueOf(name).getNazwa();
-                                case Ramiona -> displayName = ArmExercise.valueOf(name).getNazwa();
-                                case Brzuch -> displayName = AbsExercise.valueOf(name).getNazwa();
-                                case Nogi -> displayName = LegExercise.valueOf(name).getNazwa();
+                        switch (dto.exerciseCategory()) {
+                            case Klata -> displayName = ChestExercise.valueOf(name).getNazwa();
+                            // valueOf(name) – znajdź element enum ChestExercise o dokładnie tej nazwie (np. "POMPKI_KLASYCZNE")
+                            // getNazwa() – pobierz "czytelną" nazwę ćwiczenia np. "Pompki klasyczne"
+                            case Plecy -> displayName = BackExercise.valueOf(name).getNazwa();
+                            case Barki -> displayName = ShoulderExercise.valueOf(name).getNazwa();
+                            case Ramiona -> displayName = ArmExercise.valueOf(name).getNazwa();
+                            case Brzuch -> displayName = AbsExercise.valueOf(name).getNazwa();
+                            case Nogi -> displayName = LegExercise.valueOf(name).getNazwa();
                         }
                     }
 
@@ -142,8 +144,6 @@ public class TrainingService {
                 })
                 .collect(Collectors.toList());
     }
-
-
 
 
     public List<TrainingExerciseDTO> getExercise(Training training) {
@@ -173,6 +173,65 @@ public class TrainingService {
 
     }
 
+
+    public TrainingDTO addReadyPlanToUser(Long userId, TrainingPlanDTO trainingPlanDTO) {
+        User user = userService.getUserById(userId)
+                .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika o id " + userId));
+
+        //Tworzymy nowy trening
+        Training training = Training.builder()
+                .date(LocalDate.now())
+                .createdAt(LocalDateTime.now())
+                .note(trainingPlanDTO.name())
+                .userAssigned(user)
+                .build();
+
+        // Tworzymy listę ćwiczeń dla treningu na podstawie DTO
+        List<TrainingExercise> exercises = trainingPlanDTO.exercises().stream()
+                .map(dto -> {
+                    String displayName = dto.exerciseDisplayName();
+                    String exerciseName = dto.exerciseName();
+
+                    if ((displayName == null || displayName.isEmpty()) && exerciseName != null) {
+                        switch (dto.exerciseCategory()) {
+                            case Klata -> displayName = ChestExercise.valueOf(exerciseName).getNazwa();
+                            case Plecy -> displayName = BackExercise.valueOf(exerciseName).getNazwa();
+                            case Barki -> displayName = ShoulderExercise.valueOf(exerciseName).getNazwa();
+                            case Ramiona -> displayName = ArmExercise.valueOf(exerciseName).getNazwa();
+                            case Brzuch -> displayName = AbsExercise.valueOf(exerciseName).getNazwa();
+                            case Nogi -> displayName = LegExercise.valueOf(exerciseName).getNazwa();
+                        }
+                    }
+                    // Tworzymy obiekt TrainingExercise i przypisujemy ćwiczenia z powyżej do treningu utworzonego wcześniej
+                    return TrainingExercise.builder()
+                            .exerciseCategory(dto.exerciseCategory())
+                            .exerciseName(exerciseName)
+                            .exerciseDisplayName(displayName)
+                            .amount(dto.amount())
+                            .duration(dto.duration())
+                            .trainingAssigned(training)
+                            .build();
+                })
+                .collect(Collectors.toList());
+
+
+        training.setExercises(exercises);
+        calculateTiS(training);
+        trainingRepository.save(training);
+
+        List<TrainingExerciseDTO> getExercise = getExercise(training);
+
+        return new TrainingDTO(
+                training.getId(),
+                userId,
+                training.getNote(),
+                training.getIntensityScore(),
+                training.getIntensityScoreMessage(),
+                training.getDate(),
+                training.getCreatedAt(),
+                getExercise
+        );
+    }
 
     public TrainingStatisticsDTO getStatisticsForUserId(Long userId) {
         List<Training> trainings = trainingRepository.findAllByUserAssigned_Id(userId);
@@ -267,6 +326,8 @@ public class TrainingService {
 
         training.setIntensityScore(TiS);
         training.setIntensityScoreMessage(feedback);
+
+
 
 
     }

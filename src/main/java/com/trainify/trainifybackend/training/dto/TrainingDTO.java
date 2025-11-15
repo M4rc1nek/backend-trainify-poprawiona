@@ -9,7 +9,7 @@ import java.util.List;
 
 public record TrainingDTO(
 
-        Long id,
+        Long id, // trainingId
         Long userId,
 
         String note,

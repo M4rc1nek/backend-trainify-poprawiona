@@ -438,6 +438,7 @@ package com.trainify.trainifybackend.training.controller;
 
 
 import com.trainify.trainifybackend.training.dto.TrainingDTO;
+import com.trainify.trainifybackend.training.dto.TrainingPlanDTO;
 import com.trainify.trainifybackend.training.dto.TrainingStatisticsDTO;
 import com.trainify.trainifybackend.training.service.TrainingService;
 import jakarta.validation.Valid;
@@ -458,6 +459,11 @@ public class TrainingController {
     @PostMapping("/training")
     public ResponseEntity<TrainingDTO> addTraining(@RequestBody @Valid TrainingDTO trainingDTO) {
         return ResponseEntity.ok(trainingService.addTraining(trainingDTO));
+    }
+
+    @PostMapping("/training/addReadyPlanToUser/{userId}")
+    public ResponseEntity<TrainingDTO> addReadyPlanToUser(@RequestBody TrainingPlanDTO trainingPlanDTO, @PathVariable Long userId){
+        return ResponseEntity.ok(trainingService.addReadyPlanToUser(userId, trainingPlanDTO));
     }
 
 
@@ -496,7 +502,7 @@ import java.util.List;
 
 public record TrainingDTO(
 
-        Long id,
+        Long id, // trainingId
         Long userId,
 
         String note,
@@ -532,6 +538,15 @@ public record TrainingExerciseDTO(
 
         ) {
 }
+package com.trainify.trainifybackend.training.dto;
+
+import java.util.List;
+
+public record TrainingPlanDTO (
+        String name,
+        List<TrainingExerciseDTO> exercises
+
+){}
 package com.trainify.trainifybackend.training.dto;
 
 public record TrainingStatisticsDTO(
@@ -623,7 +638,7 @@ public enum BackExercise {
     private final String nazwa;
 
     BackExercise(String nazwa) {
-        this.nazwa = nazwa;
+        this.nazwa= nazwa;
     }
 }
 package com.trainify.trainifybackend.training.model;
@@ -648,11 +663,11 @@ public enum ChestExercise {
     POMPKI_SZEROKIE_KOLKA("Pompki na szerokich kółkach"),
     DIPY_IZOMETRYCZNE("Dipy izometryczne");  // średnik po ostatniej wartości
 
-    private final String nazwa;  // pole do przechowywania czytelnej nazwy
 
-    // prywatny konstruktor enum
+    private final String nazwa;
+
     ChestExercise(String nazwa) {
-        this.nazwa = nazwa;
+        this.nazwa= nazwa;
     }
 
 }
@@ -688,11 +703,13 @@ public enum LegExercise {
     WALL_SIT("Wall Sit"),
     SKOK_W_DAL_Z_MIEJSCA("Skok w dal z miejsca");
 
+
     private final String nazwa;
 
     LegExercise(String nazwa) {
-        this.nazwa = nazwa;
+        this.nazwa= nazwa;
     }
+
 }
 package com.trainify.trainifybackend.training.model;
 
@@ -834,9 +851,9 @@ import com.trainify.trainifybackend.exception.TrainingForUserNotFoundException;
 import com.trainify.trainifybackend.exception.UserNotFoundException;
 import com.trainify.trainifybackend.training.dto.TrainingDTO;
 import com.trainify.trainifybackend.training.dto.TrainingExerciseDTO;
+import com.trainify.trainifybackend.training.dto.TrainingPlanDTO;
 import com.trainify.trainifybackend.training.dto.TrainingStatisticsDTO;
-import com.trainify.trainifybackend.training.model.Training;
-import com.trainify.trainifybackend.training.model.TrainingExercise;
+import com.trainify.trainifybackend.training.model.*;
 import com.trainify.trainifybackend.training.repository.TrainingRepository;
 import com.trainify.trainifybackend.user.model.User;
 import com.trainify.trainifybackend.user.repository.UserRepository;
@@ -846,6 +863,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
@@ -940,18 +958,38 @@ public class TrainingService {
 
     public List<TrainingExercise> createExercise(TrainingDTO trainingDTO, Training training) {
         return trainingDTO.exercises().stream()
-                .map(dto -> TrainingExercise.builder()
-                        .id(dto.id())
-                        .exerciseCategory(dto.exerciseCategory())
-                        .exerciseName(dto.exerciseName())
-                        .exerciseDisplayName(dto.exerciseDisplayName())
-                        .amount(dto.amount())
-                        .duration(dto.duration())
-                        .trainingAssigned(training)
-                        .build()
-                )
-                .collect(Collectors.toList());
+                .map(dto -> {
 
+                    // Pobieramy nazwę ćwiczenia i jego "przyjazną" nazwę do wyświetlania
+                    String name = dto.exerciseName(); // np. "DIPY_NA_PORECZACH" – nazwa w enum
+                    String displayName = dto.exerciseDisplayName(); //  np. "Dipy na poręczach" – do pokazania użytkownikowi
+
+                    /* Jeśli displayName jest puste, używamy enumów, aby dopasować techniczną nazwę do czytelnej nazwy
+                    valueOf(name) zamienia String w odpowiadającą stałą enumu (np. "POMPKI_KLASYCZNE" → ChestExercise.POMPKI_KLASYCZNE)*/
+                    if (displayName == null && name != null) {
+                        switch (dto.exerciseCategory()) {
+                            case Klata -> displayName = ChestExercise.valueOf(name).getNazwa();
+                            // valueOf(name) – znajdź element enum ChestExercise o dokładnie tej nazwie (np. "POMPKI_KLASYCZNE")
+                            // getNazwa() – pobierz "czytelną" nazwę ćwiczenia np. "Pompki klasyczne"
+                            case Plecy -> displayName = BackExercise.valueOf(name).getNazwa();
+                            case Barki -> displayName = ShoulderExercise.valueOf(name).getNazwa();
+                            case Ramiona -> displayName = ArmExercise.valueOf(name).getNazwa();
+                            case Brzuch -> displayName = AbsExercise.valueOf(name).getNazwa();
+                            case Nogi -> displayName = LegExercise.valueOf(name).getNazwa();
+                        }
+                    }
+
+                    return TrainingExercise.builder()
+                            .id(dto.id())
+                            .exerciseCategory(dto.exerciseCategory())
+                            .exerciseName(name)
+                            .exerciseDisplayName(displayName)
+                            .amount(dto.amount())
+                            .duration(dto.duration())
+                            .trainingAssigned(training)
+                            .build();
+                })
+                .collect(Collectors.toList());
     }
 
 
@@ -982,6 +1020,65 @@ public class TrainingService {
 
     }
 
+
+    public TrainingDTO addReadyPlanToUser(Long userId, TrainingPlanDTO trainingPlanDTO) {
+        User user = userService.getUserById(userId)
+                .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika o id " + userId));
+
+        //Tworzymy nowy trening
+        Training training = Training.builder()
+                .date(LocalDate.now())
+                .createdAt(LocalDateTime.now())
+                .note(trainingPlanDTO.name())
+                .userAssigned(user)
+                .build();
+
+        // Tworzymy listę ćwiczeń dla treningu na podstawie DTO
+        List<TrainingExercise> exercises = trainingPlanDTO.exercises().stream()
+                .map(dto -> {
+                    String displayName = dto.exerciseDisplayName();
+                    String exerciseName = dto.exerciseName();
+
+                    if ((displayName == null || displayName.isEmpty()) && exerciseName != null) {
+                        switch (dto.exerciseCategory()) {
+                            case Klata -> displayName = ChestExercise.valueOf(exerciseName).getNazwa();
+                            case Plecy -> displayName = BackExercise.valueOf(exerciseName).getNazwa();
+                            case Barki -> displayName = ShoulderExercise.valueOf(exerciseName).getNazwa();
+                            case Ramiona -> displayName = ArmExercise.valueOf(exerciseName).getNazwa();
+                            case Brzuch -> displayName = AbsExercise.valueOf(exerciseName).getNazwa();
+                            case Nogi -> displayName = LegExercise.valueOf(exerciseName).getNazwa();
+                        }
+                    }
+                    // Tworzymy obiekt TrainingExercise i przypisujemy ćwiczenia z powyżej do treningu utworzonego wcześniej
+                    return TrainingExercise.builder()
+                            .exerciseCategory(dto.exerciseCategory())
+                            .exerciseName(exerciseName)
+                            .exerciseDisplayName(displayName)
+                            .amount(dto.amount())
+                            .duration(dto.duration())
+                            .trainingAssigned(training)
+                            .build();
+                })
+                .collect(Collectors.toList());
+
+
+        training.setExercises(exercises);
+        calculateTiS(training);
+        trainingRepository.save(training);
+
+        List<TrainingExerciseDTO> getExercise = getExercise(training);
+
+        return new TrainingDTO(
+                training.getId(),
+                userId,
+                training.getNote(),
+                training.getIntensityScore(),
+                training.getIntensityScoreMessage(),
+                training.getDate(),
+                training.getCreatedAt(),
+                getExercise
+        );
+    }
 
     public TrainingStatisticsDTO getStatisticsForUserId(Long userId) {
         List<Training> trainings = trainingRepository.findAllByUserAssigned_Id(userId);
@@ -1058,11 +1155,11 @@ public class TrainingService {
                 .mapToInt(TrainingExercise::getAmount)
                 .sum();
 
-        // Math.min(..., 100) = maksymalnie 100, Math.max(0, ...) = minimalnie 0
-        // Najpierw ograniczam górną granicę, potem dolną, wynik zawsze w przedziale 0–100
+      /*  Math.min(..., 100) = maksymalnie 100, Math.max(0, ...) = minimalnie 0
+          Najpierw ograniczam górną granicę, potem dolną, wynik zawsze w przedziale 0–100
 
-        // Normalizacja czasu i ilości powtórzeń do zakresu 0–1
-        // 80 minut i 500 powtórzeń to maksymalne wartości przy pełnym wyniku
+         Normalizacja czasu i ilości powtórzeń do zakresu 0–1
+         80 minut i 500 powtórzeń to maksymalne wartości przy pełnym wyniku*/
         double calculateDuration = Math.min(totalDuration / 60.0, 1.0);
         double calculateAmount = Math.min(totalAmount / 300.0, 1.0);
 
@@ -1076,6 +1173,8 @@ public class TrainingService {
 
         training.setIntensityScore(TiS);
         training.setIntensityScoreMessage(feedback);
+
+
 
 
     }
@@ -1272,9 +1371,3 @@ public class UserService {
         return userRepository.findById(userId);
     }
 
-
-}
-package com.trainify.trainifybackend;
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
