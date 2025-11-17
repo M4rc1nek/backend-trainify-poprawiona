@@ -3,6 +3,7 @@ package com.trainify.trainifybackend.dailywellness.service;
 
 import com.trainify.trainifybackend.dailywellness.dto.DailyWellnessDTO;
 import com.trainify.trainifybackend.dailywellness.model.DailyWellness;
+import com.trainify.trainifybackend.dailywellness.model.ReadinessLevel;
 import com.trainify.trainifybackend.dailywellness.repository.DailyWellnessRepository;
 import com.trainify.trainifybackend.exception.DailyWellnessAlreadySubmittedException;
 import com.trainify.trainifybackend.exception.DailyWellnessForUserNotFoundException;
@@ -36,7 +37,7 @@ public class DailyWellnessService {
 
 
         int readinessScore = calculateReadiness(dto);
-        String readinessLevel = determineReadinessLevel(readinessScore);
+        ReadinessLevel readinessLevel = determineReadinessLevel(readinessScore);
         String recommendation = generateRecommendation(readinessLevel);
 
 
@@ -69,7 +70,6 @@ public class DailyWellnessService {
         );
     }
 
-    @Transactional
     public List<DailyWellnessDTO> getDailyWellnessHistory(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika"));
@@ -97,7 +97,7 @@ public class DailyWellnessService {
                 .orElseThrow(() -> new DailyWellnessForUserNotFoundException("Nie znaleziono DailyWellness dla użytkownika o ID: " + userId + " w dniu " + date));
 
         int readinessScore = calculateReadiness(dto);
-        String readinessLevel = determineReadinessLevel(readinessScore);
+        ReadinessLevel readinessLevel = determineReadinessLevel(readinessScore);
         String recommendation = generateRecommendation(readinessLevel);
 
 
@@ -160,16 +160,16 @@ public class DailyWellnessService {
 
     }
 
-    private String determineReadinessLevel(int score) {
-        if (score >= 70) return "Wysoki";
-        else if (score >= 49) return "Średni";
-        else return "Niski";
+    private ReadinessLevel determineReadinessLevel(int score) {
+        if (score >= 70) return ReadinessLevel.Wysoki;
+        else if (score >= 49) return ReadinessLevel.Średni;
+        else return ReadinessLevel.Niski;
     }
 
-    private String generateRecommendation(String level) {
-        return switch (level) {
-            case "Wysoki" -> "Możesz trenować ciężko";
-            case "Średni" -> "Trenuj ostrożnie, słuchaj ciała";
+    private String generateRecommendation(ReadinessLevel readinessLevel) {
+        return switch (readinessLevel) {
+            case Wysoki -> "Możesz trenować ciężko";
+            case Średni -> "Trenuj ostrożnie, słuchaj ciała";
             default -> "Ciało potrzebuje regeneracji, nie trenuj";
         };
 

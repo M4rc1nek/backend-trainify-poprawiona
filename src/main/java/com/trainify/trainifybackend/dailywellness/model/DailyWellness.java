@@ -28,8 +28,9 @@ public class DailyWellness {
     private int motivation;
 
     private int readinessScore; // Wynik oceny gotowości użytkownika w skali 0-100, wyliczany z 5 parametrów.
-    private String readinessLevel; // Poziom gotowości: "WYSOKI", "ŚREDNI" lub "NISKI".
+    private ReadinessLevel readinessLevel; // Poziom gotowości: "WYSOKI", "ŚREDNI" lub "NISKI".
     private String recommendation; // Krótka rekomendacja treningowa na podstawie wyniku.
+
 
 
 

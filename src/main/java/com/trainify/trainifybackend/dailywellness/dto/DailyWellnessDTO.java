@@ -1,6 +1,9 @@
 package com.trainify.trainifybackend.dailywellness.dto;
 
-import jakarta.validation.constraints.*;
+import com.trainify.trainifybackend.dailywellness.model.ReadinessLevel;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.PastOrPresent;
 
 import java.time.LocalDate;
 
@@ -18,7 +21,7 @@ public record DailyWellnessDTO(
         @Min(1) @Max(10) int motivation,
 
         int readinessScore,
-        String readinessLevel,
+        ReadinessLevel readinessLevel,
         String recommendation
 ) {
 }
