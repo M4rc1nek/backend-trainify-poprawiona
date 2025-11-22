@@ -34,7 +34,7 @@ public class GlobalExceptionHandler {
     }
 
 
-    @ExceptionHandler({TrainingForUserNotFoundException.class, UserNotFoundException.class, DailyWellnessForUserNotFoundException.class})
+    @ExceptionHandler({TrainingForUserNotFoundException.class, UserNotFoundException.class, DailyWellnessForUserNotFoundException.class, UserHealthMetricsNotFoundException.class})
     public ResponseEntity<ErrorResponseDTO> handleNotFoundExceptions(RuntimeException exception, WebRequest webRequest) {
         ErrorResponseDTO body = new ErrorResponseDTO(
                 HttpStatus.NOT_FOUND.value(),

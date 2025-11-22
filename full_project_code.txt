@@ -134,6 +134,346 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowCredentials(true);
     }
 }
+package com.trainify.trainifybackend.dailywellness.controller;
+
+import com.trainify.trainifybackend.dailywellness.dto.DailyWellnessDTO;
+import com.trainify.trainifybackend.dailywellness.service.DailyWellnessService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.util.List;
+
+@RestController
+@RequiredArgsConstructor
+public class DailyWellnessController {
+
+    private final DailyWellnessService dailyWellnessService;
+
+    @PostMapping("/daily-wellness/submit")
+    public ResponseEntity<DailyWellnessDTO> submitCheck(@RequestBody @Valid DailyWellnessDTO dto) {
+        String userEmail = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ResponseEntity.ok(dailyWellnessService.submitCheck(dto, userEmail));
+    }
+
+    @GetMapping("/daily-wellness/history")
+    public ResponseEntity<List<DailyWellnessDTO>> getDailyWellnessHistory() {
+        String userEmail = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ResponseEntity.ok(dailyWellnessService.getDailyWellnessHistory(userEmail));
+    }
+
+    @DeleteMapping("/daily-wellness/{userId}")
+    public ResponseEntity<Void> deleteDailyWellness(@PathVariable Long userId, @RequestParam LocalDate date) {
+        dailyWellnessService.deleteDailyWellness(userId, date);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/daily-wellness/{userId}")
+    public ResponseEntity<DailyWellnessDTO> updateDailyWellness(@RequestBody @Valid DailyWellnessDTO dto, @PathVariable Long userId, @RequestParam LocalDate date) {
+        return ResponseEntity.ok(dailyWellnessService.updateDailyWellness(dto, userId, date));
+    }
+
+}
+package com.trainify.trainifybackend.dailywellness.dto;
+
+import com.trainify.trainifybackend.dailywellness.model.ReadinessLevel;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.PastOrPresent;
+
+import java.time.LocalDate;
+
+public record DailyWellnessDTO(
+
+        Long id,
+
+        @PastOrPresent LocalDate date,
+
+
+        @Min(0) @Max(24) double hoursSlept,
+        @Min(1) @Max(10) int energyLevel,
+        @Min(1) @Max(10) int musclePain,
+        @Min(1) @Max(10) int mood,
+        @Min(1) @Max(10) int motivation,
+
+        int readinessScore,
+        ReadinessLevel readinessLevel,
+        String recommendation
+) {
+}
+package com.trainify.trainifybackend.dailywellness.model;
+
+
+import com.trainify.trainifybackend.user.model.User;
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.LocalDate;
+
+@Builder
+@Getter
+@Setter
+@AllArgsConstructor
+@NoArgsConstructor
+@Entity
+public class DailyWellness {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private LocalDate date;
+
+    private double hoursSlept;
+    private int energyLevel;
+    private int musclePain;
+    private int mood;
+    private int motivation;
+
+    private int readinessScore; // Wynik oceny gotowości użytkownika w skali 0-100, wyliczany z 5 parametrów.
+    private ReadinessLevel readinessLevel; // Poziom gotowości: "WYSOKI", "ŚREDNI" lub "NISKI".
+    private String recommendation; // Krótka rekomendacja treningowa na podstawie wyniku.
+
+
+
+
+    @ManyToOne
+    @JoinColumn(name = "user_id")
+    private User userAssigned;
+
+}
+package com.trainify.trainifybackend.dailywellness.model;
+
+public enum ReadinessLevel {
+    Wysoki,
+    Średni,
+    Niski
+
+}
+package com.trainify.trainifybackend.dailywellness.repository;
+
+import com.trainify.trainifybackend.dailywellness.model.DailyWellness;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+public interface DailyWellnessRepository extends JpaRepository<DailyWellness, Long> {
+
+
+
+    // Pobiera pojedynczy wpis DailyWellness dla konkretnego użytkownika (userId) w określonym dniu (date).
+    // Zwraca Optional, bo wpis może istnieć lub nie.
+    @Query("SELECT d FROM DailyWellness d WHERE d.userAssigned.id = :userId AND d.date = :date")
+    Optional<DailyWellness> findByUserAssigned_IdAndDate(@Param("userId") Long userId, @Param("date") LocalDate date);
+
+
+
+    // Pobiera wszystkie wpisy DailyWellness dla konkretnego użytkownika (userId)
+    // i zwraca je posortowane od najnowszego do najstarszego według daty.
+    @Query("SELECT d FROM DailyWellness d WHERE d.userAssigned.id = :userId ORDER BY d.date DESC")
+    List<DailyWellness> findAllByUserAssigned_IdOrderByDateDesc(@Param("userId") Long userId);
+
+
+}
+package com.trainify.trainifybackend.dailywellness.service;
+
+
+import com.trainify.trainifybackend.dailywellness.dto.DailyWellnessDTO;
+import com.trainify.trainifybackend.dailywellness.model.DailyWellness;
+import com.trainify.trainifybackend.dailywellness.model.ReadinessLevel;
+import com.trainify.trainifybackend.dailywellness.repository.DailyWellnessRepository;
+import com.trainify.trainifybackend.exception.DailyWellnessAlreadySubmittedException;
+import com.trainify.trainifybackend.exception.DailyWellnessForUserNotFoundException;
+import com.trainify.trainifybackend.exception.UserNotFoundException;
+import com.trainify.trainifybackend.user.model.User;
+import com.trainify.trainifybackend.user.repository.UserRepository;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class DailyWellnessService {
+
+    private final DailyWellnessRepository dailyWellnessRepository;
+    private final UserRepository userRepository;
+
+    @Transactional
+    public DailyWellnessDTO submitCheck(DailyWellnessDTO dto, String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika"));
+
+
+        dailyWellnessRepository.findByUserAssigned_IdAndDate(user.getId(), LocalDate.now())
+                .ifPresent(w -> {
+                    throw new DailyWellnessAlreadySubmittedException("Dzisiaj formularz został już wypełniony");
+                });
+
+
+        int readinessScore = calculateReadiness(dto);
+        ReadinessLevel readinessLevel = determineReadinessLevel(readinessScore);
+        String recommendation = generateRecommendation(readinessLevel);
+
+
+        DailyWellness dailyWellness = DailyWellness.builder()
+                .date(LocalDate.now()) //LocalDate.now() zamiast dto.date() -> dlatego aby data była pobierana z teraz, żeby użytkownik nie mógł wpisać np. date jutrzejszą
+                .hoursSlept(dto.hoursSlept())
+                .energyLevel(dto.energyLevel())
+                .musclePain(dto.musclePain())
+                .mood(dto.mood())
+                .motivation(dto.motivation())
+                .readinessScore(readinessScore)
+                .readinessLevel(readinessLevel)
+                .recommendation(recommendation)
+                .userAssigned(user)
+                .build();
+
+        dailyWellnessRepository.save(dailyWellness);
+
+        return new DailyWellnessDTO(
+                dailyWellness.getId(),
+                dailyWellness.getDate(),
+                dailyWellness.getHoursSlept(),
+                dailyWellness.getEnergyLevel(),
+                dailyWellness.getMusclePain(),
+                dailyWellness.getMood(),
+                dailyWellness.getMotivation(),
+                dailyWellness.getReadinessScore(),
+                dailyWellness.getReadinessLevel(),
+                dailyWellness.getRecommendation()
+        );
+    }
+
+    public List<DailyWellnessDTO> getDailyWellnessHistory(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika"));
+        List<DailyWellness> history = dailyWellnessRepository.findAllByUserAssigned_IdOrderByDateDesc(user.getId());
+
+        return history.stream()
+                .map(d -> new DailyWellnessDTO(
+                        d.getId(),
+                        d.getDate(),
+                        d.getHoursSlept(),
+                        d.getEnergyLevel(),
+                        d.getMusclePain(),
+                        d.getMood(),
+                        d.getMotivation(),
+                        d.getReadinessScore(),
+                        d.getReadinessLevel(),
+                        d.getRecommendation()
+                ))
+                .toList();
+    }
+
+    @Transactional
+    public DailyWellnessDTO updateDailyWellness(DailyWellnessDTO dto, Long userId, LocalDate date) {
+       DailyWellness existing = dailyWellnessRepository.findByUserAssigned_IdAndDate(userId, date)
+                .orElseThrow(() -> new DailyWellnessForUserNotFoundException("Nie znaleziono DailyWellness dla użytkownika o ID: " + userId + " w dniu " + date));
+
+        int readinessScore = calculateReadiness(dto);
+        ReadinessLevel readinessLevel = determineReadinessLevel(readinessScore);
+        String recommendation = generateRecommendation(readinessLevel);
+
+
+        DailyWellness updatedDailyWellness = DailyWellness.builder()
+                .id(existing.getId())
+                .userAssigned(existing.getUserAssigned())
+                .date(dto.date())
+                .hoursSlept(dto.hoursSlept())
+                .energyLevel(dto.energyLevel())
+                .musclePain(dto.musclePain())
+                .mood(dto.mood())
+                .motivation(dto.motivation())
+                .readinessScore(readinessScore)
+                .readinessLevel(readinessLevel)
+                .recommendation(recommendation)
+                .build();
+
+
+        DailyWellness saved =  dailyWellnessRepository.save(updatedDailyWellness);
+
+
+        return new DailyWellnessDTO(
+                saved.getId(),
+                saved.getDate(),
+                saved.getHoursSlept(),
+                saved.getEnergyLevel(),
+                saved.getMusclePain(),
+                saved.getMood(),
+                saved.getMotivation(),
+                saved.getReadinessScore(),
+                saved.getReadinessLevel(),
+                saved.getRecommendation()
+        );
+    }
+
+
+    public void deleteDailyWellness(Long userId, LocalDate date) {
+        DailyWellness dailyWellness = dailyWellnessRepository.findByUserAssigned_IdAndDate(userId, date)
+                .orElseThrow(() -> new DailyWellnessForUserNotFoundException("Nie znaleziono DailyWellness dla użytkownika o ID: " + userId + " w dniu " + date));
+        dailyWellnessRepository.delete(dailyWellness);
+    }
+
+
+    private int calculateReadiness(DailyWellnessDTO dto) {
+
+        double sleepPoints;
+
+        if (dto.hoursSlept() >= 8) sleepPoints = 30;
+        else if (dto.hoursSlept() >= 7) sleepPoints = 25;
+        else if (dto.hoursSlept() >= 6) sleepPoints = 15;
+        else sleepPoints = 5;
+
+        double energyPoints = (dto.energyLevel() / 10.0) * 25;
+        double musclePainPoints = ((10 - dto.musclePain()) / 10.0) * 25;
+        double moodPoints = (dto.mood() / 10.0) * 15;
+        double motivationPoints = (dto.motivation() / 10.0) * 10;
+
+
+        return (int) Math.round(sleepPoints + energyPoints + musclePainPoints + moodPoints + motivationPoints);
+
+    }
+
+    private ReadinessLevel determineReadinessLevel(int score) {
+        if (score >= 70) return ReadinessLevel.Wysoki;
+        else if (score >= 49) return ReadinessLevel.Średni;
+        else return ReadinessLevel.Niski;
+    }
+
+    private String generateRecommendation(ReadinessLevel readinessLevel) {
+        return switch (readinessLevel) {
+            case Wysoki -> "Możesz trenować ciężko";
+            case Średni -> "Trenuj ostrożnie, słuchaj ciała";
+            default -> "Ciało potrzebuje regeneracji, nie trenuj";
+        };
+
+    }
+
+}
+package com.trainify.trainifybackend.exception;
+
+public class DailyWellnessAlreadySubmittedException extends RuntimeException {
+    public DailyWellnessAlreadySubmittedException(String message) {
+        super(message);
+    }
+}
+package com.trainify.trainifybackend.exception;
+
+public class DailyWellnessForUserNotFoundException extends RuntimeException {
+    public DailyWellnessForUserNotFoundException(String message) {
+        super(message);
+    }
+}
 package com.trainify.trainifybackend.exception;
 
 public class EmailAlreadyExistsException extends RuntimeException {
@@ -160,14 +500,12 @@ public record ErrorResponseDTO(
 package com.trainify.trainifybackend.exception;
 
 
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 
-@Slf4j
 @RestControllerAdvice // -> Działa globalnie na wszystkie kontrolery, zwraca JSON
 public class GlobalExceptionHandler {
 
@@ -183,7 +521,7 @@ public class GlobalExceptionHandler {
     Jeśli dasz true, wynik zawierałby też informacje o kliencie (np. IP, host)
      */
 
-    @ExceptionHandler({EmailAlreadyExistsException.class, UsernameAlreadyExistsException.class})
+    @ExceptionHandler({EmailAlreadyExistsException.class, UsernameAlreadyExistsException.class, DailyWellnessAlreadySubmittedException.class})
     public ResponseEntity<ErrorResponseDTO> handleConflictExceptions(RuntimeException exception, WebRequest webRequest) {
         ErrorResponseDTO body = new ErrorResponseDTO(
                 HttpStatus.CONFLICT.value(),
@@ -195,7 +533,7 @@ public class GlobalExceptionHandler {
     }
 
 
-    @ExceptionHandler({TrainingForUserNotFoundException.class, UserNotFoundException.class})
+    @ExceptionHandler({TrainingForUserNotFoundException.class, UserNotFoundException.class, DailyWellnessForUserNotFoundException.class, UserHealthMetricsNotFoundException.class})
     public ResponseEntity<ErrorResponseDTO> handleNotFoundExceptions(RuntimeException exception, WebRequest webRequest) {
         ErrorResponseDTO body = new ErrorResponseDTO(
                 HttpStatus.NOT_FOUND.value(),
@@ -242,6 +580,13 @@ public class TrainingForUserNotFoundException extends RuntimeException {
 }
 package com.trainify.trainifybackend.exception;
 
+public class UserHealthMetricsNotFoundException extends RuntimeException {
+    public UserHealthMetricsNotFoundException(String message) {
+        super(message);
+    }
+}
+package com.trainify.trainifybackend.exception;
+
 public class UsernameAlreadyExistsException extends RuntimeException {
     public UsernameAlreadyExistsException(String message) {
         super(message);
@@ -260,6 +605,365 @@ public class WrongPasswordException extends RuntimeException {
     public WrongPasswordException(String message) {
         super(message);
     }
+}
+package com.trainify.trainifybackend.healthcore.controller;
+
+
+import com.trainify.trainifybackend.healthcore.dto.UserHealthMetricsDTO;
+import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
+import com.trainify.trainifybackend.healthcore.service.HealthCalculatorService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequiredArgsConstructor
+public class UserHealthMetricsController {
+
+    private final HealthCalculatorService healthCalculatorService;
+
+    @PostMapping("/addBMI/{userId}")
+    public ResponseEntity<UserHealthMetricsDTO> addBMI(@RequestBody @Valid UserHealthMetricsDTO dto, @PathVariable Long userId) {
+        UserHealthMetrics metrics = healthCalculatorService.buildBMI(dto, userId);
+        return ResponseEntity.ok(healthCalculatorService.mapToDTO(metrics));
+    }
+
+
+    @PostMapping("/addBMR/{userId}")
+    public ResponseEntity<UserHealthMetricsDTO> addBMR(@RequestBody @Valid UserHealthMetricsDTO dto, @PathVariable Long userId) {
+        UserHealthMetrics metrics = healthCalculatorService.buildBMR(dto, userId);
+        return ResponseEntity.ok(healthCalculatorService.mapToDTO(metrics));
+    }
+
+
+    @PostMapping("/addTDEE/{userId}")
+    public ResponseEntity<UserHealthMetricsDTO> addTDEE(@RequestBody @Valid UserHealthMetricsDTO dto, @PathVariable Long userId){
+        UserHealthMetrics metrics = healthCalculatorService.buildTDEE(dto, userId);
+        return ResponseEntity.ok(healthCalculatorService.mapToDTO(metrics));
+    }
+
+    @GetMapping("/getBMI/{userId}")
+    public ResponseEntity<Double> getBMI(@PathVariable Long userId) {
+        return ResponseEntity.ok(healthCalculatorService.getBMI(userId));
+    }
+
+
+    @GetMapping("/getBMR/{userId}")
+    public ResponseEntity<Double> getBMR(@PathVariable Long userId) {
+        return ResponseEntity.ok(healthCalculatorService.getBMR(userId));
+    }
+
+
+    @GetMapping("/getTDEE/{userId}")
+    public ResponseEntity<Double> getTDEE(@PathVariable Long userId) {
+        return ResponseEntity.ok(healthCalculatorService.getTDEE(userId));
+    }
+
+
+}
+
+package com.trainify.trainifybackend.healthcore.dto;
+
+public record MetricsDTO (
+        double BMI,
+        double BMR,
+        double TDEE
+){
+
+}
+package com.trainify.trainifybackend.healthcore.dto;
+
+import com.trainify.trainifybackend.healthcore.model.ActivityLevel;
+import com.trainify.trainifybackend.healthcore.model.BmiFeedback;
+import com.trainify.trainifybackend.healthcore.model.GenderType;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+
+public record UserHealthMetricsDTO(
+
+        Long id,
+
+
+        ActivityLevel activityLevel,
+        GenderType genderType,
+
+        @Min(1) @Max(99) int age,
+        @DecimalMin("1.0") @DecimalMax("250.0") double height, // cm
+        @DecimalMin("30.0") @DecimalMax("300.0") double weight, // kg
+
+        double BMI,
+        double BMR,
+        double TDEE,
+        BmiFeedback bmiFeedback
+
+) {
+}
+package com.trainify.trainifybackend.healthcore.model;
+
+public enum ActivityLevel {
+    Brak,
+    Niski,
+    Umiarkowany,
+    Wysoki,
+    Ekstremalny,
+}
+package com.trainify.trainifybackend.healthcore.model;
+
+public enum BmiFeedback {
+    niedowaga,
+    prawidłowa,
+    nadwaga,
+    otyłość
+}
+package com.trainify.trainifybackend.healthcore.model;
+
+public enum GenderType {
+    Mężczyzna,
+    Kobieta
+}
+package com.trainify.trainifybackend.healthcore.model;
+
+public enum GoalType {
+    Redukcja,
+    Utrzymanie,
+    Masa
+}
+package com.trainify.trainifybackend.healthcore.model;
+
+import com.trainify.trainifybackend.user.model.User;
+import jakarta.persistence.*;
+import lombok.*;
+
+@AllArgsConstructor
+@NoArgsConstructor
+@Entity
+@Builder
+@Getter
+@Setter
+public class UserHealthMetrics {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private int age;
+
+    private double height; // metry
+    private double weight;
+
+    private  GenderType genderType;
+
+    private ActivityLevel activityLevel;
+
+    private double BMI;
+    private double BMR;
+    private double TDEE;
+
+    private BmiFeedback bmiFeedback;
+
+    @ManyToOne
+    @JoinColumn(name = "user_id")
+    private User userAssigned;
+
+
+}
+package com.trainify.trainifybackend.healthcore.repository;
+
+import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
+
+public interface HealthCoreRepository extends JpaRepository<UserHealthMetrics, Long> {
+
+
+    @Query("SELECT u FROM UserHealthMetrics u WHERE u.userAssigned.id = :userId ORDER BY u.id DESC")
+    Optional<UserHealthMetrics> findTopByUserAssigned_IdOrderByIdDesc(@Param("userId") Long userId);
+}
+package com.trainify.trainifybackend.healthcore.service;
+
+import com.trainify.trainifybackend.exception.UserHealthMetricsNotFoundException;
+import com.trainify.trainifybackend.exception.UserNotFoundException;
+import com.trainify.trainifybackend.healthcore.dto.UserHealthMetricsDTO;
+import com.trainify.trainifybackend.healthcore.model.ActivityLevel;
+import com.trainify.trainifybackend.healthcore.model.BmiFeedback;
+import com.trainify.trainifybackend.healthcore.model.GenderType;
+import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
+import com.trainify.trainifybackend.healthcore.repository.HealthCoreRepository;
+import com.trainify.trainifybackend.user.model.User;
+import com.trainify.trainifybackend.user.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class HealthCalculatorService {
+
+    private final UserRepository userRepository;
+    private final HealthCoreRepository healthCoreRepository;
+
+
+    public User getUserOrThrow(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika o id " + userId));
+    }
+
+    public UserHealthMetrics buildMetrics(Long userId){
+        //Szukasz ostatnich metryk użytkownika (BMI, BMR, TDEE) jeśli są to je zwracasz,  jeśli nie ma idzie przechodzisz do .orElseGet
+        return healthCoreRepository.findTopByUserAssigned_IdOrderByIdDesc(userId)
+                .orElseGet(() -> { //Tworzysz ogólny szkielet metryk który przypisujesz do użytkownika
+                    User user = getUserOrThrow(userId);
+                    return UserHealthMetrics.builder()
+                            .userAssigned(user)
+                            .build();
+                }); // Dzięki szkieletowi w innych metodach wystarczy tylko ustawić brakujące wartości zamiast zawsze tworzyć nowy obiekt.
+
+        //Zamiast zawsze tworzyć nowe metryki, orElseGet zostanie wywołane tylko wtedy, gdy nie znajdziemy istniejących metryk.
+
+
+    }
+
+    public UserHealthMetrics buildBMI(UserHealthMetricsDTO dto, Long userId) {
+        UserHealthMetrics userHealthMetrics = buildMetrics(userId);
+
+        userHealthMetrics.setHeight(dto.height());
+        userHealthMetrics.setWeight(dto.weight());
+        calculateBMI(userHealthMetrics);
+
+        healthCoreRepository.save(userHealthMetrics);
+
+        return userHealthMetrics;
+    }
+
+    public UserHealthMetrics buildBMR(UserHealthMetricsDTO dto, Long userId) {
+        UserHealthMetrics userHealthMetrics = buildMetrics(userId);
+
+        userHealthMetrics.setHeight(dto.height());
+        userHealthMetrics.setWeight(dto.weight());
+        userHealthMetrics.setAge(dto.age());
+        userHealthMetrics.setGenderType(dto.genderType());
+
+        calculateBMR(userHealthMetrics);
+        healthCoreRepository.save(userHealthMetrics);
+
+        return userHealthMetrics;
+    }
+
+    public UserHealthMetrics buildTDEE(UserHealthMetricsDTO dto, Long userId) {
+        UserHealthMetrics userHealthMetrics = buildMetrics(userId);
+
+        if(userHealthMetrics.getBMR() == 0.0){
+            throw new IllegalStateException("Przed obliczeniem TDEE musisz najpierw obliczyć BMR");
+        }
+        userHealthMetrics.setActivityLevel(dto.activityLevel());
+
+        if(userHealthMetrics.getActivityLevel() == null){
+            throw new IllegalStateException("ActivityLevel nie może być puste przy liczeniu TDEE");
+        }
+
+        calculateBMR(userHealthMetrics);
+        calculateTDEE(userHealthMetrics);
+        healthCoreRepository.save(userHealthMetrics);
+
+        return userHealthMetrics;
+    }
+
+
+    public UserHealthMetricsDTO mapToDTO(UserHealthMetrics metrics) {
+        return new UserHealthMetricsDTO(
+                metrics.getId(),
+                metrics.getActivityLevel(),
+                metrics.getGenderType(),
+                metrics.getAge(),
+                metrics.getHeight(),
+                metrics.getWeight(),
+                metrics.getBMR(),
+                metrics.getBMI(),
+                metrics.getTDEE(),
+                metrics.getBmiFeedback()
+        );
+    }
+
+
+    public UserHealthMetrics getMetricsOrThrow(Long userId) {
+        return healthCoreRepository.findTopByUserAssigned_IdOrderByIdDesc(userId)
+                .orElseThrow(() -> new UserHealthMetricsNotFoundException("Brak zapisanych metryk zdrowotnych dla użytkownika o id: " + userId));
+    }
+
+    public double getBMI(Long userId) {
+        return getMetricsOrThrow(userId).getBMI();
+    }
+
+    public double getBMR(Long userId) {
+        return getMetricsOrThrow(userId).getBMR();
+    }
+
+    public double getTDEE(Long userId) {
+        return getMetricsOrThrow(userId).getTDEE();
+    }
+
+
+    private void calculateBMI(UserHealthMetrics userHealthMetrics) {
+        double heightInMeters = userHealthMetrics.getHeight() / 100.0;
+        double BMI = userHealthMetrics.getWeight() / (heightInMeters * heightInMeters);
+
+        BmiFeedback feedback;
+
+        if (BMI < 18.5) feedback = BmiFeedback.niedowaga;
+        else if (BMI <= 24.9) feedback = BmiFeedback.prawidłowa;
+        else if (BMI <= 29.9) feedback = BmiFeedback.nadwaga;
+        else feedback = BmiFeedback.otyłość;
+
+
+        userHealthMetrics.setBMI(BMI);
+        userHealthMetrics.setBmiFeedback(feedback);
+    }
+
+
+    private void calculateBMR(UserHealthMetrics userHealthMetrics) {
+
+        GenderType genderType = userHealthMetrics.getGenderType();
+        double BMR;
+
+        switch (genderType) {
+            case Mężczyzna ->
+                    BMR = 10 * userHealthMetrics.getWeight() + 6.25 * userHealthMetrics.getHeight() - 5 * userHealthMetrics.getAge() + 5;
+            case Kobieta ->
+                    BMR = 10 * userHealthMetrics.getWeight() + 6.25 * userHealthMetrics.getHeight() - 5 * userHealthMetrics.getAge() - 161;
+            default -> throw new IllegalStateException("Nie ma takiej płci:  " + genderType);
+        }
+
+        userHealthMetrics.setBMR(BMR);
+
+    }
+
+    private void calculateTDEE(UserHealthMetrics userHealthMetrics) {
+
+        ActivityLevel activityLevel = userHealthMetrics.getActivityLevel();
+        double PAL; // to samo co activityLevel ale wartości nie enum (Physical Activity Level)
+
+        switch (activityLevel) {
+            case Brak -> PAL = 1.2;
+            case Niski -> PAL = 1.375;
+            case Umiarkowany -> PAL = 1.55;
+            case Wysoki -> PAL = 1.7;
+            case Ekstremalny -> PAL = 1.9;
+            default -> throw new IllegalStateException("Nie ma takiej aktywności:  " + activityLevel);
+        }
+
+        double TDEE = userHealthMetrics.getBMR() * PAL;
+
+        userHealthMetrics.setTDEE(TDEE);
+
+
+    }
+
+
 }
 package com.trainify.trainifybackend.security.service;
 
@@ -557,7 +1261,7 @@ public record TrainingStatisticsDTO(
 
 ) {
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 import lombok.Getter;
 
@@ -585,7 +1289,7 @@ public enum AbsExercise {
         this.nazwa = nazwa;
     }
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 import lombok.Getter;
 
@@ -613,7 +1317,7 @@ public enum ArmExercise {
         this.nazwa = nazwa;
     }
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 import lombok.Getter;
 
@@ -641,7 +1345,7 @@ public enum BackExercise {
         this.nazwa= nazwa;
     }
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 import lombok.Getter;
 
@@ -671,7 +1375,7 @@ public enum ChestExercise {
     }
 
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 public enum ExerciseCategory {
     Klata,
@@ -681,7 +1385,7 @@ public enum ExerciseCategory {
     Brzuch,
     Nogi
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 import lombok.Getter;
 
@@ -711,7 +1415,7 @@ public enum LegExercise {
     }
 
 }
-package com.trainify.trainifybackend.training.model;
+package com.trainify.trainifybackend.training.model.exerciseModel;
 
 import lombok.Getter;
 
@@ -788,6 +1492,7 @@ public class Training {
 package com.trainify.trainifybackend.training.model;
 
 
+import com.trainify.trainifybackend.training.model.exerciseModel.ExerciseCategory;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -853,7 +1558,9 @@ import com.trainify.trainifybackend.training.dto.TrainingDTO;
 import com.trainify.trainifybackend.training.dto.TrainingExerciseDTO;
 import com.trainify.trainifybackend.training.dto.TrainingPlanDTO;
 import com.trainify.trainifybackend.training.dto.TrainingStatisticsDTO;
-import com.trainify.trainifybackend.training.model.*;
+import com.trainify.trainifybackend.training.model.Training;
+import com.trainify.trainifybackend.training.model.TrainingExercise;
+import com.trainify.trainifybackend.training.model.exerciseModel.*;
 import com.trainify.trainifybackend.training.repository.TrainingRepository;
 import com.trainify.trainifybackend.user.model.User;
 import com.trainify.trainifybackend.user.repository.UserRepository;
@@ -1174,10 +1881,8 @@ public class TrainingService {
         training.setIntensityScore(TiS);
         training.setIntensityScoreMessage(feedback);
 
-
-
-
     }
+
 }
 package com.trainify.trainifybackend.user.controller;
 
@@ -1230,9 +1935,12 @@ public record UserRegisterLoginDTO(
 }
 package com.trainify.trainifybackend.user.model;
 
+import com.trainify.trainifybackend.dailywellness.model.DailyWellness;
+import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
 import com.trainify.trainifybackend.training.model.Training;
 import jakarta.persistence.*;
 import lombok.*;
+import org.springframework.security.config.annotation.web.oauth2.client.OAuth2ClientSecurityMarker;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -1259,6 +1967,13 @@ public class User {
 
     @OneToMany(mappedBy = "userAssigned", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Training> trainings;
+
+    @OneToMany(mappedBy = "userAssigned")
+    private List<DailyWellness> dailyWellnessHistory;
+
+
+    @OneToMany(mappedBy = "userAssigned")
+    private List<UserHealthMetrics> userHealthMetrics;
 }
 package com.trainify.trainifybackend.user.repository;
 
@@ -1371,3 +2086,5 @@ public class UserService {
         return userRepository.findById(userId);
     }
 
+
+}

@@ -12,6 +12,9 @@ import java.util.Optional;
 public interface DailyWellnessRepository extends JpaRepository<DailyWellness, Long> {
 
 
+
+    // Pobiera pojedynczy wpis DailyWellness dla konkretnego użytkownika (userId) w określonym dniu (date).
+    // Zwraca Optional, bo wpis może istnieć lub nie.
     @Query("SELECT d FROM DailyWellness d WHERE d.userAssigned.id = :userId AND d.date = :date")
     Optional<DailyWellness> findByUserAssigned_IdAndDate(@Param("userId") Long userId, @Param("date") LocalDate date);
 
