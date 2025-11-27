@@ -1,5 +1,7 @@
 package com.trainify.trainifybackend.healthcore.service;
 
+import com.trainify.trainifybackend.exception.InvalidEnumValueException;
+import com.trainify.trainifybackend.exception.MissingRequirementException;
 import com.trainify.trainifybackend.exception.UserHealthMetricsNotFoundException;
 import com.trainify.trainifybackend.exception.UserNotFoundException;
 import com.trainify.trainifybackend.healthcore.dto.UserHealthMetricsDTO;
@@ -26,15 +28,15 @@ public class HealthCalculatorService {
                 .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika o id " + userId));
     }
 
-    public UserHealthMetrics buildMetrics(Long userId){
-        //Szukasz ostatnich metryk użytkownika (BMI, BMR, TDEE) jeśli są to je zwracasz,  jeśli nie ma idzie przechodzisz do .orElseGet
+    public UserHealthMetrics buildMetrics(Long userId) {
+        //Szukasz ostatnich metryk użytkownika (BMI, BMR, TDEE), jeśli są to je zwracasz, jeśli nie ma idzie przechodzisz do .orElseGet
         return healthCoreRepository.findTopByUserAssigned_IdOrderByIdDesc(userId)
-                .orElseGet(() -> { //Tworzysz ogólny szkielet metryk który przypisujesz do użytkownika
+                .orElseGet(() -> { //Tworzysz ogólny szkielet metryk, który przypisujesz do użytkownika
                     User user = getUserOrThrow(userId);
                     return UserHealthMetrics.builder()
                             .userAssigned(user)
                             .build();
-                }); // Dzięki szkieletowi w innych metodach wystarczy tylko ustawić brakujące wartości zamiast zawsze tworzyć nowy obiekt.
+                }); // Dzięki szkieletowi w innych metodach wystarczy tylko ustawić brakujące wartości, zamiast zawsze tworzyć nowy obiekt.
 
         //Zamiast zawsze tworzyć nowe metryki, orElseGet zostanie wywołane tylko wtedy, gdy nie znajdziemy istniejących metryk.
 
@@ -70,13 +72,13 @@ public class HealthCalculatorService {
     public UserHealthMetrics buildTDEE(UserHealthMetricsDTO dto, Long userId) {
         UserHealthMetrics userHealthMetrics = buildMetrics(userId);
 
-        if(userHealthMetrics.getBMR() == 0.0){
-            throw new IllegalStateException("Przed obliczeniem TDEE musisz najpierw obliczyć BMR");
+        if (userHealthMetrics.getBMR() == 0.0) {
+            throw new MissingRequirementException("Przed obliczeniem TDEE musisz najpierw obliczyć BMR");
         }
         userHealthMetrics.setActivityLevel(dto.activityLevel());
 
-        if(userHealthMetrics.getActivityLevel() == null){
-            throw new IllegalStateException("ActivityLevel nie może być puste przy liczeniu TDEE");
+        if (userHealthMetrics.getActivityLevel() == null) {
+            throw new MissingRequirementException("ActivityLevel nie może być puste przy liczeniu TDEE");
         }
         calculateTDEE(userHealthMetrics);
         healthCoreRepository.save(userHealthMetrics);
@@ -146,7 +148,7 @@ public class HealthCalculatorService {
                     BMR = 10 * userHealthMetrics.getWeight() + 6.25 * userHealthMetrics.getHeight() - 5 * userHealthMetrics.getAge() + 5;
             case Kobieta ->
                     BMR = 10 * userHealthMetrics.getWeight() + 6.25 * userHealthMetrics.getHeight() - 5 * userHealthMetrics.getAge() - 161;
-            default -> throw new IllegalStateException("Nie ma takiej płci:  " + genderType);
+            default -> throw new InvalidEnumValueException("Nie ma takiej płci:  " + genderType);
         }
 
         userHealthMetrics.setBMR(BMR);
@@ -164,7 +166,7 @@ public class HealthCalculatorService {
             case Umiarkowany -> PAL = 1.55;
             case Wysoki -> PAL = 1.7;
             case Ekstremalny -> PAL = 1.9;
-            default -> throw new IllegalStateException("Nie ma takiej aktywności:  " + activityLevel);
+            default -> throw new InvalidEnumValueException("Nie ma takiej aktywności:  " + activityLevel);
         }
 
         double TDEE = userHealthMetrics.getBMR() * PAL;

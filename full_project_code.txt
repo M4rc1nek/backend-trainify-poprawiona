@@ -107,6 +107,7 @@ public class SecurityFilterChainConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/register", "/login").permitAll() //register, /login → dostęp dla wszystkich (nie trzeba tokena JWT).
                         .requestMatchers("/training/**").authenticated() //training/** → dostęp tylko dla zalogowanych użytkowników (czyli muszą mieć ważny token JWT).
+                        .requestMatchers("/contact").permitAll()
                         .anyRequest().authenticated()    //anyRequest().authenticated() → każde inne żądanie też wymaga zalogowania.
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // „Nie twórz sesji, nie zapamiętuj zalogowanego użytkownika — wszystko opiera się na tokenie JWT"
@@ -133,6 +134,74 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedHeaders("*")
                 .allowCredentials(true);
     }
+}
+package com.trainify.trainifybackend.contact.controller;
+
+import com.trainify.trainifybackend.contact.dto.ContactDTO;
+import com.trainify.trainifybackend.contact.service.ContactService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequiredArgsConstructor
+public class ContactController {
+
+    private final ContactService contactService;
+
+
+    @PostMapping("/contact")
+    public ResponseEntity<Void> sendMessage(@Valid @RequestBody ContactDTO contactDTO){
+        contactService.sendContactEmail(contactDTO);
+        return ResponseEntity.ok().build();
+    }
+
+}
+package com.trainify.trainifybackend.contact.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+
+public record ContactDTO(
+        @NotBlank String name,
+        @NotBlank String message,
+        @NotBlank String subject,
+        @Email String email
+) {
+}
+package com.trainify.trainifybackend.contact.service;
+
+import com.trainify.trainifybackend.contact.dto.ContactDTO;
+import lombok.RequiredArgsConstructor;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+
+@Async
+@Service
+@RequiredArgsConstructor
+public class ContactService {
+
+   private final JavaMailSender mailSender;
+
+   public void sendContactEmail(ContactDTO dto){
+       SimpleMailMessage message = new SimpleMailMessage();
+       // Adres odbiorcy — Twój mail administratora
+       message.setTo("getrespectstudio@gmail.com");
+       // Temat wiadomości
+       message.setSubject(dto.subject());
+       message.setReplyTo(dto.email()); // // Ustawiamy adres osoby, która wysłała formularz, dzięki temu w Gmailu klikniesz "Odpowiedz" i mail pójdzie do użytkownika
+       message.setText(
+               "Od: " + dto.name() + " (" + dto.email() + ")\n\n" + dto.message() // Treść wiadomości, czyli dane wysłane w formularzu
+       );
+       mailSender.send(message);
+
+   }
+
 }
 package com.trainify.trainifybackend.dailywellness.controller;
 
@@ -515,7 +584,8 @@ public class GlobalExceptionHandler {
            NOT_FOUND (404) → brak danych (np. użytkownik nie istnieje)
            BAD_REQUEST (400) → błędne dane wejściowe (np. niepoprawny format)
            UNAUTHORIZED (401) → nieprawidłowe logowanie lub brak autoryzacji
-
+           UNPROCESSABLE_ENTITY (422) ->  dane są poprawne, ale operacja nie może zostać wykonana z powodów biznesowych (brakuje czegoś ważnego)
+                          (np. próba obliczenia TDEE bez wcześniejszego obliczenia BMR)
 
     webRequest.getDescription(false) - Pobiera opis żądania path, np.  /register lub /login
     Jeśli dasz true, wynik zawierałby też informacje o kliencie (np. IP, host)
@@ -557,6 +627,31 @@ public class GlobalExceptionHandler {
     }
 
 
+    @ExceptionHandler(InvalidEnumValueException.class)
+    public ResponseEntity<ErrorResponseDTO> handleInvalidEnumValue(InvalidEnumValueException exception, WebRequest webRequest) {
+        ErrorResponseDTO body = new ErrorResponseDTO(
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                exception.getMessage(),
+                webRequest.getDescription(false).replace("uri=", "")
+        );
+        return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
+    }
+
+
+    @ExceptionHandler(MissingRequirementException.class)
+    public ResponseEntity<ErrorResponseDTO> handleMissingRequirement(MissingRequirementException exception, WebRequest webRequest){
+        ErrorResponseDTO body = new ErrorResponseDTO(
+                HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                HttpStatus.UNPROCESSABLE_ENTITY.getReasonPhrase(),
+                exception.getMessage(),
+                webRequest.getDescription(false).replace("uri=", "")
+        );
+        return new ResponseEntity<>(body, HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponseDTO> handleAll(Exception exception, WebRequest webRequest) {
         ErrorResponseDTO body = new ErrorResponseDTO(
@@ -569,7 +664,20 @@ public class GlobalExceptionHandler {
     }
 
 
+}
+package com.trainify.trainifybackend.exception;
 
+public class InvalidEnumValueException extends RuntimeException {
+    public InvalidEnumValueException(String message) {
+        super(message);
+    }
+}
+package com.trainify.trainifybackend.exception;
+
+public class MissingRequirementException extends RuntimeException {
+    public MissingRequirementException(String message) {
+        super(message);
+    }
 }
 package com.trainify.trainifybackend.exception;
 
@@ -679,8 +787,6 @@ import com.trainify.trainifybackend.healthcore.model.BmiFeedback;
 import com.trainify.trainifybackend.healthcore.model.GenderType;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
 
 public record UserHealthMetricsDTO(
 
@@ -690,7 +796,7 @@ public record UserHealthMetricsDTO(
         ActivityLevel activityLevel,
         GenderType genderType,
 
-        @Min(1) @Max(99) int age,
+        int age,
         @DecimalMin("1.0") @DecimalMax("250.0") double height, // cm
         @DecimalMin("30.0") @DecimalMax("300.0") double weight, // kg
 
@@ -726,13 +832,6 @@ public enum GenderType {
 }
 package com.trainify.trainifybackend.healthcore.model;
 
-public enum GoalType {
-    Redukcja,
-    Utrzymanie,
-    Masa
-}
-package com.trainify.trainifybackend.healthcore.model;
-
 import com.trainify.trainifybackend.user.model.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -756,6 +855,7 @@ public class UserHealthMetrics {
 
     private  GenderType genderType;
 
+    @Enumerated(EnumType.STRING)
     private ActivityLevel activityLevel;
 
     private double BMI;
@@ -774,19 +874,17 @@ package com.trainify.trainifybackend.healthcore.repository;
 
 import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 
 public interface HealthCoreRepository extends JpaRepository<UserHealthMetrics, Long> {
 
-
-    @Query("SELECT u FROM UserHealthMetrics u WHERE u.userAssigned.id = :userId ORDER BY u.id DESC")
-    Optional<UserHealthMetrics> findTopByUserAssigned_IdOrderByIdDesc(@Param("userId") Long userId);
+    Optional<UserHealthMetrics> findTopByUserAssigned_IdOrderByIdDesc(Long userId);
 }
 package com.trainify.trainifybackend.healthcore.service;
 
+import com.trainify.trainifybackend.exception.InvalidEnumValueException;
+import com.trainify.trainifybackend.exception.MissingRequirementException;
 import com.trainify.trainifybackend.exception.UserHealthMetricsNotFoundException;
 import com.trainify.trainifybackend.exception.UserNotFoundException;
 import com.trainify.trainifybackend.healthcore.dto.UserHealthMetricsDTO;
@@ -813,15 +911,15 @@ public class HealthCalculatorService {
                 .orElseThrow(() -> new UserNotFoundException("Nie znaleziono użytkownika o id " + userId));
     }
 
-    public UserHealthMetrics buildMetrics(Long userId){
-        //Szukasz ostatnich metryk użytkownika (BMI, BMR, TDEE) jeśli są to je zwracasz,  jeśli nie ma idzie przechodzisz do .orElseGet
+    public UserHealthMetrics buildMetrics(Long userId) {
+        //Szukasz ostatnich metryk użytkownika (BMI, BMR, TDEE), jeśli są to je zwracasz, jeśli nie ma idzie przechodzisz do .orElseGet
         return healthCoreRepository.findTopByUserAssigned_IdOrderByIdDesc(userId)
-                .orElseGet(() -> { //Tworzysz ogólny szkielet metryk który przypisujesz do użytkownika
+                .orElseGet(() -> { //Tworzysz ogólny szkielet metryk, który przypisujesz do użytkownika
                     User user = getUserOrThrow(userId);
                     return UserHealthMetrics.builder()
                             .userAssigned(user)
                             .build();
-                }); // Dzięki szkieletowi w innych metodach wystarczy tylko ustawić brakujące wartości zamiast zawsze tworzyć nowy obiekt.
+                }); // Dzięki szkieletowi w innych metodach wystarczy tylko ustawić brakujące wartości, zamiast zawsze tworzyć nowy obiekt.
 
         //Zamiast zawsze tworzyć nowe metryki, orElseGet zostanie wywołane tylko wtedy, gdy nie znajdziemy istniejących metryk.
 
@@ -857,16 +955,14 @@ public class HealthCalculatorService {
     public UserHealthMetrics buildTDEE(UserHealthMetricsDTO dto, Long userId) {
         UserHealthMetrics userHealthMetrics = buildMetrics(userId);
 
-        if(userHealthMetrics.getBMR() == 0.0){
-            throw new IllegalStateException("Przed obliczeniem TDEE musisz najpierw obliczyć BMR");
+        if (userHealthMetrics.getBMR() == 0.0) {
+            throw new MissingRequirementException("Przed obliczeniem TDEE musisz najpierw obliczyć BMR");
         }
         userHealthMetrics.setActivityLevel(dto.activityLevel());
 
-        if(userHealthMetrics.getActivityLevel() == null){
-            throw new IllegalStateException("ActivityLevel nie może być puste przy liczeniu TDEE");
+        if (userHealthMetrics.getActivityLevel() == null) {
+            throw new MissingRequirementException("ActivityLevel nie może być puste przy liczeniu TDEE");
         }
-
-        calculateBMR(userHealthMetrics);
         calculateTDEE(userHealthMetrics);
         healthCoreRepository.save(userHealthMetrics);
 
@@ -882,8 +978,8 @@ public class HealthCalculatorService {
                 metrics.getAge(),
                 metrics.getHeight(),
                 metrics.getWeight(),
-                metrics.getBMR(),
                 metrics.getBMI(),
+                metrics.getBMR(),
                 metrics.getTDEE(),
                 metrics.getBmiFeedback()
         );
@@ -935,7 +1031,7 @@ public class HealthCalculatorService {
                     BMR = 10 * userHealthMetrics.getWeight() + 6.25 * userHealthMetrics.getHeight() - 5 * userHealthMetrics.getAge() + 5;
             case Kobieta ->
                     BMR = 10 * userHealthMetrics.getWeight() + 6.25 * userHealthMetrics.getHeight() - 5 * userHealthMetrics.getAge() - 161;
-            default -> throw new IllegalStateException("Nie ma takiej płci:  " + genderType);
+            default -> throw new InvalidEnumValueException("Nie ma takiej płci:  " + genderType);
         }
 
         userHealthMetrics.setBMR(BMR);
@@ -953,7 +1049,7 @@ public class HealthCalculatorService {
             case Umiarkowany -> PAL = 1.55;
             case Wysoki -> PAL = 1.7;
             case Ekstremalny -> PAL = 1.9;
-            default -> throw new IllegalStateException("Nie ma takiej aktywności:  " + activityLevel);
+            default -> throw new InvalidEnumValueException("Nie ma takiej aktywności:  " + activityLevel);
         }
 
         double TDEE = userHealthMetrics.getBMR() * PAL;
@@ -2086,5 +2182,34 @@ public class UserService {
         return userRepository.findById(userId);
     }
 
+
+}
+package com.trainify.trainifybackend;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableAsync;
+
+@EnableAsync
+@SpringBootApplication
+public class TrainifyBackendApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(TrainifyBackendApplication.class, args);
+	}
+
+}
+package com.trainify.trainifybackend;
+
+import com.trainify.trainifybackend.user.service.UserService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class TrainifyBackendApplicationTests {
+	@Test
+	void contextLoads() {
+	}
 
 }

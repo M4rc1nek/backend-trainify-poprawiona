@@ -16,7 +16,8 @@ public class GlobalExceptionHandler {
            NOT_FOUND (404) → brak danych (np. użytkownik nie istnieje)
            BAD_REQUEST (400) → błędne dane wejściowe (np. niepoprawny format)
            UNAUTHORIZED (401) → nieprawidłowe logowanie lub brak autoryzacji
-
+           UNPROCESSABLE_ENTITY (422) ->  dane są poprawne, ale operacja nie może zostać wykonana z powodów biznesowych (brakuje czegoś ważnego)
+                          (np. próba obliczenia TDEE bez wcześniejszego obliczenia BMR)
 
     webRequest.getDescription(false) - Pobiera opis żądania path, np.  /register lub /login
     Jeśli dasz true, wynik zawierałby też informacje o kliencie (np. IP, host)
@@ -58,6 +59,31 @@ public class GlobalExceptionHandler {
     }
 
 
+    @ExceptionHandler(InvalidEnumValueException.class)
+    public ResponseEntity<ErrorResponseDTO> handleInvalidEnumValue(InvalidEnumValueException exception, WebRequest webRequest) {
+        ErrorResponseDTO body = new ErrorResponseDTO(
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                exception.getMessage(),
+                webRequest.getDescription(false).replace("uri=", "")
+        );
+        return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
+    }
+
+
+    @ExceptionHandler(MissingRequirementException.class)
+    public ResponseEntity<ErrorResponseDTO> handleMissingRequirement(MissingRequirementException exception, WebRequest webRequest){
+        ErrorResponseDTO body = new ErrorResponseDTO(
+                HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                HttpStatus.UNPROCESSABLE_ENTITY.getReasonPhrase(),
+                exception.getMessage(),
+                webRequest.getDescription(false).replace("uri=", "")
+        );
+        return new ResponseEntity<>(body, HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponseDTO> handleAll(Exception exception, WebRequest webRequest) {
         ErrorResponseDTO body = new ErrorResponseDTO(
@@ -68,7 +94,6 @@ public class GlobalExceptionHandler {
         );
         return new ResponseEntity<>(body, HttpStatus.INTERNAL_SERVER_ERROR);
     }
-
 
 
 }

@@ -23,6 +23,7 @@ public class UserHealthMetrics {
 
     private  GenderType genderType;
 
+    @Enumerated(EnumType.STRING)
     private ActivityLevel activityLevel;
 
     private double BMI;

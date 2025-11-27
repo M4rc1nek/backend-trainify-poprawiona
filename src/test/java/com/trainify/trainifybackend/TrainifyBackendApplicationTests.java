@@ -7,11 +7,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 class TrainifyBackendApplicationTests {
-
-    @Autowired
-    private UserService service;
-
-
 	@Test
 	void contextLoads() {
 	}
