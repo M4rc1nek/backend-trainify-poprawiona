@@ -32,6 +32,7 @@ public class TrainingService {
     private final TrainingRepository trainingRepository;
     private final UserRepository userRepository;
     private final UserService userService;
+    private final GenerateTisFeedbackService generateTisFeedbackService;
 
     @Transactional
     public TrainingDTO addTraining(TrainingDTO trainingDTO) {
@@ -321,9 +322,9 @@ public class TrainingService {
         double TiS = (calculateDuration * 0.5 + calculateAmount * 0.5) * 100;
         String feedback;
 
-        if (TiS < 40) feedback = "Lekki Trening";
-        else if (TiS < 70) feedback = "Dobry trening";
-        else feedback = "Bardzo dobry trening";
+        if (TiS < 40) feedback = generateTisFeedbackService.generateRandomLightFeedback();  // Dodanie losowych zdan 50 losowych dla kazdego, uzycie random
+        else if (TiS < 70) feedback = generateTisFeedbackService.generateRandomGoodFeedback();
+        else feedback = generateTisFeedbackService.generateRandomVeryGoodFeedback();
 
 
         training.setIntensityScore(TiS);
