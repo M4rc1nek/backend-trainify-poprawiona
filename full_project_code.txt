@@ -108,6 +108,7 @@ public class SecurityFilterChainConfig {
                         .requestMatchers("/register", "/login").permitAll() //register, /login → dostęp dla wszystkich (nie trzeba tokena JWT).
                         .requestMatchers("/training/**").authenticated() //training/** → dostęp tylko dla zalogowanych użytkowników (czyli muszą mieć ważny token JWT).
                         .requestMatchers("/contact").permitAll()
+                        .requestMatchers("/api/pdf/**").authenticated()
                         .anyRequest().authenticated()    //anyRequest().authenticated() → każde inne żądanie też wymaga zalogowania.
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // „Nie twórz sesji, nie zapamiętuj zalogowanego użytkownika — wszystko opiera się na tokenie JWT"
@@ -717,6 +718,7 @@ public class WrongPasswordException extends RuntimeException {
 package com.trainify.trainifybackend.healthcore.controller;
 
 
+import com.trainify.trainifybackend.healthcore.dto.MacronutrientsDTO;
 import com.trainify.trainifybackend.healthcore.dto.UserHealthMetricsDTO;
 import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
 import com.trainify.trainifybackend.healthcore.service.HealthCalculatorService;
@@ -751,6 +753,12 @@ public class UserHealthMetricsController {
         return ResponseEntity.ok(healthCalculatorService.mapToDTO(metrics));
     }
 
+    @PostMapping("/addMacro/{userId}")
+    public ResponseEntity<UserHealthMetricsDTO> addMacro(@RequestBody @Valid UserHealthMetricsDTO dto, @PathVariable Long userId){
+        UserHealthMetrics metrics = healthCalculatorService.buildMacronutrients(dto, userId);
+        return ResponseEntity.ok(healthCalculatorService.mapToDTO(metrics));
+    }
+
     @GetMapping("/getBMI/{userId}")
     public ResponseEntity<Double> getBMI(@PathVariable Long userId) {
         return ResponseEntity.ok(healthCalculatorService.getBMI(userId));
@@ -768,23 +776,26 @@ public class UserHealthMetricsController {
         return ResponseEntity.ok(healthCalculatorService.getTDEE(userId));
     }
 
-
+    @GetMapping("/getMacro/{userId}")
+    public ResponseEntity<MacronutrientsDTO> getMacronutrients(@PathVariable Long userId){
+        return ResponseEntity.ok(healthCalculatorService.getMacronutrients(userId));
+    }
 }
 
 package com.trainify.trainifybackend.healthcore.dto;
 
-public record MetricsDTO (
-        double BMI,
-        double BMR,
-        double TDEE
-){
-
+public record MacronutrientsDTO(
+        double protein,
+        double fats,
+        double carbohydrates
+) {
 }
 package com.trainify.trainifybackend.healthcore.dto;
 
 import com.trainify.trainifybackend.healthcore.model.ActivityLevel;
 import com.trainify.trainifybackend.healthcore.model.BmiFeedback;
 import com.trainify.trainifybackend.healthcore.model.GenderType;
+import com.trainify.trainifybackend.healthcore.model.GoalType;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 
@@ -795,6 +806,8 @@ public record UserHealthMetricsDTO(
 
         ActivityLevel activityLevel,
         GenderType genderType,
+        GoalType goalType,
+
 
         int age,
         @DecimalMin("1.0") @DecimalMax("250.0") double height, // cm
@@ -832,6 +845,13 @@ public enum GenderType {
 }
 package com.trainify.trainifybackend.healthcore.model;
 
+public enum GoalType {
+    Redukcja,
+    Utrzymanie,
+    Masa
+}
+package com.trainify.trainifybackend.healthcore.model;
+
 import com.trainify.trainifybackend.user.model.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -853,7 +873,8 @@ public class UserHealthMetrics {
     private double height; // metry
     private double weight;
 
-    private  GenderType genderType;
+    private GenderType genderType;
+    private GoalType goalType;
 
     @Enumerated(EnumType.STRING)
     private ActivityLevel activityLevel;
@@ -861,6 +882,13 @@ public class UserHealthMetrics {
     private double BMI;
     private double BMR;
     private double TDEE;
+
+
+    private double protein;
+    private double carbohydrates;
+    private double fats;
+
+    private double macro;
 
     private BmiFeedback bmiFeedback;
 
@@ -887,11 +915,9 @@ import com.trainify.trainifybackend.exception.InvalidEnumValueException;
 import com.trainify.trainifybackend.exception.MissingRequirementException;
 import com.trainify.trainifybackend.exception.UserHealthMetricsNotFoundException;
 import com.trainify.trainifybackend.exception.UserNotFoundException;
+import com.trainify.trainifybackend.healthcore.dto.MacronutrientsDTO;
 import com.trainify.trainifybackend.healthcore.dto.UserHealthMetricsDTO;
-import com.trainify.trainifybackend.healthcore.model.ActivityLevel;
-import com.trainify.trainifybackend.healthcore.model.BmiFeedback;
-import com.trainify.trainifybackend.healthcore.model.GenderType;
-import com.trainify.trainifybackend.healthcore.model.UserHealthMetrics;
+import com.trainify.trainifybackend.healthcore.model.*;
 import com.trainify.trainifybackend.healthcore.repository.HealthCoreRepository;
 import com.trainify.trainifybackend.user.model.User;
 import com.trainify.trainifybackend.user.repository.UserRepository;
@@ -969,12 +995,32 @@ public class HealthCalculatorService {
         return userHealthMetrics;
     }
 
+    public UserHealthMetrics buildMacronutrients(UserHealthMetricsDTO dto, Long userId) {
+        UserHealthMetrics userHealthMetrics = buildMetrics(userId);
+
+
+        if (userHealthMetrics.getTDEE() == 0) {
+            calculateTDEE(userHealthMetrics);
+        }
+        userHealthMetrics.setGoalType(dto.goalType());
+        if (userHealthMetrics.getGoalType() == null) {
+            throw new MissingRequirementException("Cel nie może być pusty");
+        }
+
+
+        calculateMacronutrients(userHealthMetrics);
+        healthCoreRepository.save(userHealthMetrics);
+
+        return userHealthMetrics;
+    }
+
 
     public UserHealthMetricsDTO mapToDTO(UserHealthMetrics metrics) {
         return new UserHealthMetricsDTO(
                 metrics.getId(),
                 metrics.getActivityLevel(),
                 metrics.getGenderType(),
+                metrics.getGoalType(),
                 metrics.getAge(),
                 metrics.getHeight(),
                 metrics.getWeight(),
@@ -1001,6 +1047,11 @@ public class HealthCalculatorService {
 
     public double getTDEE(Long userId) {
         return getMetricsOrThrow(userId).getTDEE();
+    }
+
+    public MacronutrientsDTO getMacronutrients(Long userId) {
+       UserHealthMetrics metrics =  getMetricsOrThrow(userId);
+        return new MacronutrientsDTO(metrics.getProtein(), metrics.getFats(), metrics.getCarbohydrates());
     }
 
 
@@ -1059,7 +1110,204 @@ public class HealthCalculatorService {
 
     }
 
+    //macronutrients -> makrosładniki
+    private void calculateMacronutrients(UserHealthMetrics userHealthMetrics) {
+        GoalType goalType = userHealthMetrics.getGoalType();
 
+
+        double proteinCalories, fatCalories, carbCalories;
+        calculateTDEE(userHealthMetrics);
+        //zapotrzebowanie kaloryczne
+        double caloricRequirement = userHealthMetrics.getTDEE();
+        switch (goalType) {
+            case Redukcja -> {
+                proteinCalories = caloricRequirement * 0.3;
+                fatCalories = caloricRequirement * 0.25;
+                carbCalories = caloricRequirement * 0.45;
+            }
+            case Utrzymanie -> {
+                proteinCalories = caloricRequirement * 0.3;
+                fatCalories = caloricRequirement * 0.2;
+                carbCalories = caloricRequirement * 0.5;
+            }
+            case Masa -> {
+                proteinCalories = caloricRequirement * 0.25;
+                fatCalories = caloricRequirement * 0.25;
+                carbCalories = caloricRequirement * 0.5;
+            }
+            default -> throw new InvalidEnumValueException("Nie ma takiego celu " + goalType);
+        }
+        double proteinInGrams = proteinCalories / 4;
+        double carbohydratesInGrams = carbCalories / 4;
+        double fatsInGrams = fatCalories / 9;
+
+
+        userHealthMetrics.setProtein(proteinInGrams);
+        userHealthMetrics.setFats(fatsInGrams);
+        userHealthMetrics.setCarbohydrates(carbohydratesInGrams);
+
+    }
+
+
+}
+package com.trainify.trainifybackend.pdfexport.controller;
+
+import com.trainify.trainifybackend.pdfexport.service.PdfExportService;
+import com.trainify.trainifybackend.training.dto.TrainingDTO;
+import com.trainify.trainifybackend.training.service.TrainingService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/pdf")
+@RequiredArgsConstructor
+public class PdfExportController {
+
+    private final PdfExportService pdfExportService;
+    private final TrainingService trainingService;
+
+    @GetMapping("/trainingsPdf")
+    public ResponseEntity<byte[]> getTrainingsPdf(@RequestParam String email) {
+
+        //Wyciągasz treningi dla użytkownika po emailu
+        List<TrainingDTO> trainings = trainingService.getTrainingsForUserByEmail(email);
+
+        byte[] pdfBytes = pdfExportService.generateTrainingsPdf(trainings); // wywolanie serwisu ktory tworzy PDF
+
+        //Dzięki temu przeglądarka wie, że odpowiedź to plik PDF do pobrania z nazwą weekly_trainings.pdf
+        HttpHeaders httpHeaders = new HttpHeaders();
+        httpHeaders.setContentType(MediaType.APPLICATION_PDF);
+        httpHeaders.setContentDispositionFormData("attachment", "trainings_history.pdf");
+
+        return ResponseEntity.ok()
+                .headers(httpHeaders)
+                .body(pdfBytes);
+    }
+}
+package com.trainify.trainifybackend.pdfexport.service;
+
+import com.trainify.trainifybackend.training.dto.TrainingDTO;
+import com.trainify.trainifybackend.training.dto.TrainingExerciseDTO;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.springframework.stereotype.Service;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.util.List;
+
+@Service
+public class PdfExportService {
+
+    public byte[] generateTrainingsPdf(List<TrainingDTO> trainings) { // byte dlatego ze pliki PDF operuja na byte
+
+
+        if (trainings.isEmpty()) {
+            throw new RuntimeException("Brak treningów");
+        }
+
+        try (PDDocument document = new PDDocument();  // tworzysz dokument PDF
+             ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
+
+
+            PDType0Font fontBold = PDType0Font.load(document, getClass().getResourceAsStream("/fonts/arialbd.ttf"));
+            PDType0Font fontRegular = PDType0Font.load(document, getClass().getResourceAsStream("/fonts/arial.ttf"));
+
+            PDPage page = new PDPage(); // nowa strona PDF
+            document.addPage(page); //do pdfa dodajesz strone
+
+            PDPageContentStream content = new PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true);
+            int y = 750; // Wysokosc startowa na stronie (od gory)
+            int lineHeight = 20; //  Odległość między kolejnymi liniami tekstu
+
+
+            for (TrainingDTO training : trainings) {
+
+                if(y < 50){
+                    content.close();
+                    page = new PDPage();
+                    document.addPage(page);
+                    content = new PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true);
+                    y = 750;
+                }
+
+                content.beginText(); // Rozpoczynamy pisanie tekstu
+                content.setFont(fontBold, 14); // Ustawiamy pogrubioną czcionkę o rozmiarze 14
+                content.newLineAtOffset(50, y); // Ustawiamy pozycję startową tekstu (x=50, y)
+                content.showText("Trening: " + training.date()); // Wypisujemy tekst z datą treningu
+                content.endText(); // Kończymy pisanie tekstu
+                y -= lineHeight; // Przesuwamy kursor w dół o wysokość jednej linii
+
+                if(y < 50){
+                    content.close();
+                    page = new PDPage();
+                    document.addPage(page);
+                    content = new PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true);
+                    y = 750;
+                }
+                content.beginText();
+                content.setFont(fontRegular, 12);
+                content.newLineAtOffset(50, y);
+                content.showText("Notatka: " + training.note() + " | Intensywność: " + training.intensityScore());
+                content.endText();
+                y -= lineHeight;
+
+
+                // Ćwiczenia
+                for (TrainingExerciseDTO ex : training.exercises()) {
+                    if(y < 50){
+                        content.close();
+                        page = new PDPage();
+                        document.addPage(page);
+                        content = new PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true);
+                        y = 750;
+                    }
+                    content.beginText();
+                    content.setFont(fontRegular, 12);
+                    content.newLineAtOffset(60, y);
+                    content.showText("- " + ex.exerciseDisplayName() + ": " + ex.amount() + " powt., " + ex.duration() + " min");
+                    content.endText();
+                    y -= lineHeight;
+                }
+                y -= 10;
+            }
+
+
+            content.beginText();
+            content.setFont(fontBold, 14);
+            content.newLineAtOffset(50, y);
+            content.showText("Dziękujemy za korzystanie z Trainify");
+            content.endText();
+            y -= lineHeight;
+
+
+            content.beginText();
+            content.setFont(fontRegular, 18);
+            content.newLineAtOffset(50,y);
+            content.showText("( ͡° ͜ʖ ͡°)");
+            content.endText();
+            y -= lineHeight;
+
+            content.close();
+
+            document.save(byteArrayOutputStream);  //zapisujesz dokument
+            return byteArrayOutputStream.toByteArray(); // zwracasz PDF jako tablicę bajtów
+
+        } catch (Exception e) {
+            throw new RuntimeException("Błąd przy generowaniu PDF ", e);
+        }
+
+    }
 }
 package com.trainify.trainifybackend.security.service;
 
@@ -1648,6 +1896,59 @@ public interface TrainingRepository extends JpaRepository<Training, Long> {
 }
 package com.trainify.trainifybackend.training.service;
 
+import org.springframework.stereotype.Service;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.List;
+import java.util.Random;
+
+@Service
+public class GenerateTisFeedbackService {
+    private final List<String> lightFeedback = load("tisfeedback/lightFeedback.txt");
+    private final List<String> goodFeedback = load("tisfeedback/goodFeedback.txt");
+    private final List<String> veryGoodFeedback = load("tisfeedback/veryGoodFeedback.txt");
+
+
+    private final Random random = new Random();
+
+
+    public List<String> load(String path) {
+        try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(path)) {
+            if (inputStream == null) throw new IllegalStateException("Nie znaleziono pliku" + path);
+
+            return new BufferedReader(new InputStreamReader(inputStream))
+                    .lines()
+                    .filter(line -> !line.isBlank()) // pomija puste linie
+                    .toList();
+
+        } catch (IOException e) {
+            throw new RuntimeException("Błąd podczas ładowania pliku");
+        }
+    }
+
+    public String generateRandomLightFeedback(){
+        return  lightFeedback.get(random.nextInt(lightFeedback.size()));
+    }
+
+    public String generateRandomGoodFeedback(){
+        return  goodFeedback.get(random.nextInt(goodFeedback.size()));
+    }
+
+    public String generateRandomVeryGoodFeedback(){
+        return  veryGoodFeedback.get(random.nextInt(veryGoodFeedback.size()));
+    }
+
+
+}
+
+
+
+
+package com.trainify.trainifybackend.training.service;
+
 import com.trainify.trainifybackend.exception.TrainingForUserNotFoundException;
 import com.trainify.trainifybackend.exception.UserNotFoundException;
 import com.trainify.trainifybackend.training.dto.TrainingDTO;
@@ -1680,6 +1981,7 @@ public class TrainingService {
     private final TrainingRepository trainingRepository;
     private final UserRepository userRepository;
     private final UserService userService;
+    private final GenerateTisFeedbackService generateTisFeedbackService;
 
     @Transactional
     public TrainingDTO addTraining(TrainingDTO trainingDTO) {
@@ -1969,9 +2271,9 @@ public class TrainingService {
         double TiS = (calculateDuration * 0.5 + calculateAmount * 0.5) * 100;
         String feedback;
 
-        if (TiS < 40) feedback = "Lekki Trening";
-        else if (TiS < 70) feedback = "Dobry trening";
-        else feedback = "Bardzo dobry trening";
+        if (TiS < 40) feedback = generateTisFeedbackService.generateRandomLightFeedback();  // Dodanie losowych zdan 50 losowych dla kazdego, uzycie random
+        else if (TiS < 70) feedback = generateTisFeedbackService.generateRandomGoodFeedback();
+        else feedback = generateTisFeedbackService.generateRandomVeryGoodFeedback();
 
 
         training.setIntensityScore(TiS);

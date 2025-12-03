@@ -53,6 +53,7 @@ public class SecurityFilterChainConfig {
                         .requestMatchers("/register", "/login").permitAll() //register, /login → dostęp dla wszystkich (nie trzeba tokena JWT).
                         .requestMatchers("/training/**").authenticated() //training/** → dostęp tylko dla zalogowanych użytkowników (czyli muszą mieć ważny token JWT).
                         .requestMatchers("/contact").permitAll()
+                        .requestMatchers("/api/pdf/**").authenticated()
                         .anyRequest().authenticated()    //anyRequest().authenticated() → każde inne żądanie też wymaga zalogowania.
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // „Nie twórz sesji, nie zapamiętuj zalogowanego użytkownika — wszystko opiera się na tokenie JWT"
